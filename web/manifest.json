@@ -1,0 +1,11 @@
+{
+  "name": "PlantGPT",
+  "short_name": "PlantGPT",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F7F8FA",
+  "theme_color": "#2563EB",
+  "description": "A ChatGPT-style Flutter app with swappable database linkage.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false
+}
