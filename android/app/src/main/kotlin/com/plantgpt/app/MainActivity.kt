@@ -1,4 +1,4 @@
-package com.example.chatgpt_alt_db
+package com.plantgpt.app
 
 import io.flutter.embedding.android.FlutterActivity
 
