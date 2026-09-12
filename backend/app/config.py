@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_model: str = "gpt-5"
+    # Reuses openai_api_key (same OpenAI account) - the LLM Gateway and RAG
+    # embeddings are different API surfaces but not different credentials.
+    embedding_model: str = "text-embedding-3-small"
 
     openrouter_api_key: str = ""
     openrouter_model: str = "openrouter/free"

@@ -4,3 +4,7 @@ __pycache__/
 .env
 *.db
 .pytest_cache/
+
+# Local object storage (Phase 3 RAG - uploaded documents, dev/solo-scale only,
+# see the Phase 3 plan's object-storage ADR). Real content, never committed.
+/data/

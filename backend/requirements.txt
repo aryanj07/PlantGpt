@@ -7,4 +7,11 @@ arq>=0.26,<1.0
 httpx>=0.27,<1.0
 python-jose[cryptography]>=3.3,<4.0
 
+# Phase 3 (RAG): Postgres+pgvector driver/type, migrations, PDF parsing.
+psycopg[binary]>=3.2,<4.0
+pgvector>=0.3,<1.0
+alembic>=1.13,<2.0
+pypdf>=5.0,<6.0
+python-multipart>=0.0.9  # FastAPI file-upload (UploadFile) support
+
 pytest>=8.0,<9.0
