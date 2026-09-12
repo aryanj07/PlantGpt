@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,20 @@ import 'package:image_picker/image_picker.dart';
 
 import '../domain/chat_message.dart';
 import '../domain/chat_repository.dart';
+
+/// A per-session local key, not a real conversation identity. It's only
+/// ever used as an in-memory cache key by the repositories (see
+/// ApiChatRepository's doc comment) - the backend resolves "your"
+/// conversation from the authenticated identity, never from this string, so
+/// it doesn't need to be stable across app restarts or shared between users.
+String _generateLocalConversationId() {
+  final random = Random();
+  final suffix = List.generate(
+    12,
+    (_) => random.nextInt(16).toRadixString(16),
+  ).join();
+  return 'session-${DateTime.now().microsecondsSinceEpoch}-$suffix';
+}
 
 class ChatPage extends StatefulWidget {
   const ChatPage({required this.repository, super.key});
@@ -16,7 +31,7 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
-  static const _conversationId = 'default-conversation';
+  final _conversationId = _generateLocalConversationId();
 
   final _controller = TextEditingController();
   final _scrollController = ScrollController();

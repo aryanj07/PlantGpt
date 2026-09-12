@@ -6,7 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-http.Response _conversationResponse(String id) {
+http.Response _conversationResponse(String id,
+    {String updatedAt = '2026-01-01T00:00:00Z'}) {
   return http.Response(
     jsonEncode({
       'id': id,
@@ -14,8 +15,17 @@ http.Response _conversationResponse(String id) {
       'user_id': 'dev-user',
       'title': null,
       'created_at': '2026-01-01T00:00:00Z',
-      'updated_at': '2026-01-01T00:00:00Z',
+      'updated_at': updatedAt,
     }),
+    200,
+    headers: {'content-type': 'application/json'},
+  );
+}
+
+http.Response _conversationListResponse(
+    List<Map<String, dynamic>> conversations) {
+  return http.Response(
+    jsonEncode(conversations),
     200,
     headers: {'content-type': 'application/json'},
   );
@@ -27,6 +37,18 @@ http.Response _messagesResponse(List<Map<String, dynamic>> messages) {
     200,
     headers: {'content-type': 'application/json'},
   );
+}
+
+Map<String, dynamic> _conversationJson(String id,
+    {String updatedAt = '2026-01-01T00:00:00Z'}) {
+  return {
+    'id': id,
+    'tenant_id': 'default',
+    'user_id': 'dev-user',
+    'title': null,
+    'created_at': '2026-01-01T00:00:00Z',
+    'updated_at': updatedAt,
+  };
 }
 
 Map<String, dynamic> _messageJson({
@@ -46,7 +68,7 @@ Map<String, dynamic> _messageJson({
 
 void main() {
   test(
-      'loadMessages provisions a backend conversation then returns a welcome message when empty',
+      'loadMessages creates a backend conversation when none exist yet, then returns a welcome message',
       () async {
     final requests = <http.Request>[];
     final repository = ApiChatRepository(
@@ -55,6 +77,10 @@ void main() {
       devUserId: 'dev-user',
       client: MockClient((request) async {
         requests.add(request);
+        if (request.method == 'GET' &&
+            request.url.path == '/v1/conversations') {
+          return _conversationListResponse([]);
+        }
         if (request.method == 'POST' &&
             request.url.path == '/v1/conversations') {
           return _conversationResponse('backend-conv-1');
@@ -63,19 +89,21 @@ void main() {
       }),
     );
 
-    final messages = await repository.loadMessages('default-conversation');
+    final messages = await repository.loadMessages('local-session-1');
 
-    expect(requests, hasLength(2));
-    expect(requests[0].method, 'POST');
+    expect(requests, hasLength(3));
+    expect(requests[0].method, 'GET');
     expect(requests[0].url.path, '/v1/conversations');
-    expect(requests[1].method, 'GET');
-    expect(requests[1].url.path, '/v1/conversations/backend-conv-1/messages');
+    expect(requests[1].method, 'POST');
+    expect(requests[1].url.path, '/v1/conversations');
+    expect(requests[2].method, 'GET');
+    expect(requests[2].url.path, '/v1/conversations/backend-conv-1/messages');
     expect(messages, hasLength(1));
     expect(messages.single.role, ChatRole.assistant);
   });
 
   test(
-      'loadMessages reuses the cached backend conversation id on a second call',
+      'loadMessages resumes the most recently updated existing conversation instead of creating a new one',
       () async {
     var conversationCreateCount = 0;
     final repository = ApiChatRepository(
@@ -83,10 +111,18 @@ void main() {
       devTenantId: 'default',
       devUserId: 'dev-user',
       client: MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path == '/v1/conversations') {
+          return _conversationListResponse([
+            _conversationJson('older-conv', updatedAt: '2026-01-01T00:00:00Z'),
+            _conversationJson('newest-conv', updatedAt: '2026-01-03T00:00:00Z'),
+            _conversationJson('middle-conv', updatedAt: '2026-01-02T00:00:00Z'),
+          ]);
+        }
         if (request.method == 'POST' &&
             request.url.path == '/v1/conversations') {
           conversationCreateCount++;
-          return _conversationResponse('backend-conv-1');
+          return _conversationResponse('should-not-be-created');
         }
         return _messagesResponse([
           _messageJson(id: 'm1', role: 'user', content: 'hi'),
@@ -95,13 +131,39 @@ void main() {
       }),
     );
 
-    await repository.loadMessages('default-conversation');
-    final second = await repository.loadMessages('default-conversation');
+    final messages = await repository.loadMessages('local-session-1');
 
-    expect(conversationCreateCount, 1);
+    expect(conversationCreateCount, 0);
+    expect(messages, hasLength(2));
+  });
+
+  test(
+      'loadMessages reuses the cached backend conversation id on a second call',
+      () async {
+    var listCallCount = 0;
+    final repository = ApiChatRepository(
+      baseUrl: 'https://api.plantgpt.test',
+      devTenantId: 'default',
+      devUserId: 'dev-user',
+      client: MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path == '/v1/conversations') {
+          listCallCount++;
+          return _conversationListResponse(
+              [_conversationJson('backend-conv-1')]);
+        }
+        return _messagesResponse([
+          _messageJson(id: 'm1', role: 'user', content: 'hi'),
+          _messageJson(id: 'm2', role: 'assistant', content: 'hello'),
+        ]);
+      }),
+    );
+
+    await repository.loadMessages('local-session-1');
+    final second = await repository.loadMessages('local-session-1');
+
+    expect(listCallCount, 1);
     expect(second, hasLength(2));
-    expect(second[0].role, ChatRole.user);
-    expect(second[1].role, ChatRole.assistant);
   });
 
   test('saveUserMessage returns an optimistic message without any network call',
@@ -116,7 +178,7 @@ void main() {
     );
 
     final message = await repository.saveUserMessage(
-      conversationId: 'default-conversation',
+      conversationId: 'local-session-1',
       content: 'What is the kiln burning-zone temperature?',
     );
 
@@ -132,6 +194,10 @@ void main() {
       devTenantId: 'default',
       devUserId: 'dev-user',
       client: MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path == '/v1/conversations') {
+          return _conversationListResponse([]);
+        }
         if (request.method == 'POST' &&
             request.url.path == '/v1/conversations') {
           return _conversationResponse('backend-conv-1');
@@ -145,7 +211,7 @@ void main() {
     );
 
     final reply = await repository.createAssistantReply(
-      conversationId: 'default-conversation',
+      conversationId: 'local-session-1',
       userMessage: 'What temp?',
     );
 
@@ -162,15 +228,16 @@ void main() {
       devUserId: 'user-x',
       client: MockClient((request) async {
         headers = request.headers;
-        if (request.method == 'POST' &&
+        if (request.method == 'GET' &&
             request.url.path == '/v1/conversations') {
-          return _conversationResponse('backend-conv-1');
+          return _conversationListResponse(
+              [_conversationJson('backend-conv-1')]);
         }
         return _messagesResponse([]);
       }),
     );
 
-    await repository.loadMessages('default-conversation');
+    await repository.loadMessages('local-session-1');
 
     expect(headers['x-dev-tenant-id'], 'tenant-x');
     expect(headers['x-dev-user-id'], 'user-x');
@@ -187,15 +254,16 @@ void main() {
       devUserId: 'user-x',
       client: MockClient((request) async {
         headers = request.headers;
-        if (request.method == 'POST' &&
+        if (request.method == 'GET' &&
             request.url.path == '/v1/conversations') {
-          return _conversationResponse('backend-conv-1');
+          return _conversationListResponse(
+              [_conversationJson('backend-conv-1')]);
         }
         return _messagesResponse([]);
       }),
     );
 
-    await repository.loadMessages('default-conversation');
+    await repository.loadMessages('local-session-1');
 
     expect(headers['authorization'], 'Bearer real-session-token');
     expect(headers.containsKey('x-dev-tenant-id'), isFalse);
@@ -212,35 +280,47 @@ void main() {
     );
 
     expect(
-      () => repository.loadMessages('default-conversation'),
+      () => repository.loadMessages('local-session-1'),
       throwsA(isA<ApiChatException>()),
     );
   });
 
   test(
-      'clearMessages forgets the mapping so the next load provisions a new conversation',
+      'clearMessages always creates a genuinely new conversation, even when one already exists',
       () async {
-    var conversationCreateCount = 0;
-    var nextBackendId = 'backend-conv-1';
+    var createCount = 0;
+    var listCount = 0;
     final repository = ApiChatRepository(
       baseUrl: 'https://api.plantgpt.test',
       devTenantId: 'default',
       devUserId: 'dev-user',
       client: MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path == '/v1/conversations') {
+          listCount++;
+          return _conversationListResponse([_conversationJson('old-conv')]);
+        }
         if (request.method == 'POST' &&
             request.url.path == '/v1/conversations') {
-          conversationCreateCount++;
-          return _conversationResponse(nextBackendId);
+          createCount++;
+          return _conversationResponse('new-conv-$createCount');
         }
         return _messagesResponse([]);
       }),
     );
 
-    await repository.loadMessages('default-conversation');
-    await repository.clearMessages('default-conversation');
-    nextBackendId = 'backend-conv-2';
-    await repository.loadMessages('default-conversation');
+    // Resumes the existing conversation - no create call yet.
+    await repository.loadMessages('local-session-1');
+    expect(createCount, 0);
+    expect(listCount, 1);
 
-    expect(conversationCreateCount, 2);
+    // "New chat" must not just resume 'old-conv' again.
+    await repository.clearMessages('local-session-1');
+    expect(createCount, 1);
+
+    // The next load uses the freshly created conversation from cache,
+    // without re-listing.
+    await repository.loadMessages('local-session-1');
+    expect(listCount, 1);
   });
 }

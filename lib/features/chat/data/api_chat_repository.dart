@@ -36,13 +36,13 @@ class ApiChatException implements Exception {
 ///
 /// Conversation IDs: the backend issues its own UUIDs via
 /// `POST /v1/conversations`; the [ChatRepository] interface only ever gives
-/// this class a client-chosen `conversationId` string (currently always the
-/// hardcoded `'default-conversation'` from `chat_page.dart`, itself a
-/// separate task to remove). This class bridges the gap by auto-provisioning
-/// one backend conversation per distinct local id it sees and caching the
-/// mapping in memory — a new backend conversation is created each app launch,
-/// which matches every other repository's launch-to-launch behavior today
-/// (none of them persist which conversation was "current" across restarts).
+/// this class a client-chosen `conversationId` string (an arbitrary
+/// per-session value from `chat_page.dart` - it carries no meaning to the
+/// backend). This class resolves that to a real backend conversation by
+/// resuming the authenticated identity's most recent existing conversation,
+/// creating one only if none exists yet (`_resolveBackendConversationId`) -
+/// so chat history survives an app restart based on who you are, not on
+/// which local string happened to be passed in.
 class ApiChatRepository implements ChatRepository {
   ApiChatRepository({
     required String baseUrl,
@@ -74,8 +74,9 @@ class ApiChatRepository implements ChatRepository {
     }
     final tenant = devTenantId;
     final user = devUserId;
-    if (tenant != null && tenant.isNotEmpty)
+    if (tenant != null && tenant.isNotEmpty) {
       headers['X-Dev-Tenant-Id'] = tenant;
+    }
     if (user != null && user.isNotEmpty) headers['X-Dev-User-Id'] = user;
     return headers;
   }
@@ -104,13 +105,15 @@ class ApiChatRepository implements ChatRepository {
 
   @override
   Future<void> clearMessages(String conversationId) async {
-    // No delete/archive endpoint on the backend yet (Phase 1 scope) -
-    // forgetting the mapping means the next loadMessages call provisions a
-    // brand new backend conversation, which is what "New chat" should feel
-    // like from the UI's side. The old conversation row is left behind
-    // server-side, just unreachable from this client until real
-    // conversation listing/history exists.
-    _backendConversationIds.remove(conversationId);
+    // Unlike the initial resolve below (which resumes the most recent
+    // existing backend conversation, so a restart doesn't lose history),
+    // "New chat" must always start a genuinely new one - so this creates
+    // directly rather than going through the resume-or-create path. No
+    // delete/archive endpoint exists yet (Phase 1 scope), so the old
+    // conversation row is left behind server-side, just no longer reachable
+    // from this client until real conversation listing/history UI exists.
+    final backendId = await _createBackendConversation();
+    _backendConversationIds[conversationId] = backendId;
   }
 
   @override
@@ -175,11 +178,52 @@ class ApiChatRepository implements ChatRepository {
     return _messageFromJson(assistantJson, conversationId);
   }
 
+  /// Resumes the caller's most recent existing backend conversation, or
+  /// creates one if none exists. The backend already scopes
+  /// `GET /v1/conversations` by the authenticated identity's tenant_id
+  /// (never by this [localConversationId], which is purely a local cache
+  /// key) - so this is what actually makes conversation history survive an
+  /// app restart, independent of whatever string the client happens to pass
+  /// in. That's the real fix behind removing the old hardcoded
+  /// `'default-conversation'` literal from `chat_page.dart`: identity, not
+  /// a magic shared string, is what the backend uses to find "your" chat.
   Future<String> _resolveBackendConversationId(
       String localConversationId) async {
     final cached = _backendConversationIds[localConversationId];
     if (cached != null) return cached;
 
+    final listResponse = await _get('/v1/conversations');
+    if (listResponse.statusCode == 401) {
+      throw const ApiChatException('Not authenticated. Please sign in again.');
+    }
+    if (listResponse.statusCode != 200) {
+      throw ApiChatException(
+        'Failed to list conversations (status ${listResponse.statusCode}).',
+        technicalDetails: listResponse.body,
+      );
+    }
+
+    final existing = (jsonDecode(listResponse.body) as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    if (existing.isNotEmpty) {
+      final mostRecent = existing.reduce((a, b) {
+        final aTime =
+            DateTime.tryParse(a['updated_at'] as String? ?? '') ?? DateTime(0);
+        final bTime =
+            DateTime.tryParse(b['updated_at'] as String? ?? '') ?? DateTime(0);
+        return bTime.isAfter(aTime) ? b : a;
+      });
+      final backendId = mostRecent['id'] as String;
+      _backendConversationIds[localConversationId] = backendId;
+      return backendId;
+    }
+
+    final backendId = await _createBackendConversation();
+    _backendConversationIds[localConversationId] = backendId;
+    return backendId;
+  }
+
+  Future<String> _createBackendConversation() async {
     final response = await _post('/v1/conversations');
 
     if (response.statusCode == 401) {
@@ -193,9 +237,7 @@ class ApiChatRepository implements ChatRepository {
     }
 
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    final backendId = decoded['id'] as String;
-    _backendConversationIds[localConversationId] = backendId;
-    return backendId;
+    return decoded['id'] as String;
   }
 
   Future<http.Response> _get(String path) async {
