@@ -4,27 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-PlantGPT (package name `chatgpt_alt_db`) is a Flutter chat app modeled on ChatGPT's UI, purpose-built
+PlantGPT (package name `chatgpt_alt_db`) is a Flutter chat client modeled on ChatGPT's UI, purpose-built
 as a domain assistant for **industrial plant operations** — cement plants, steel plants, and
-manufacturing plants ("plant" as in facility, not botany). The `_systemPrompt` shared across the AI
-repositories steers responses toward process parameters, equipment troubleshooting, production-line
-optimization, maintenance, and safety. The app is built so the database/AI backend can be swapped
-without touching the UI. All chat screens depend only on the `ChatRepository` abstract interface
-(`lib/features/chat/domain/chat_repository.dart`), never on a concrete data source directly.
+manufacturing plants ("plant" as in facility, not botany). It's paired with a FastAPI backend
+(`backend/`, see `backend/README.md`) that owns the LLM Gateway, Auth Module, and (eventually) RAG/MCP —
+the client no longer talks to any LLM provider or holds any provider API key directly. All chat screens
+depend only on the `ChatRepository` abstract interface (`lib/features/chat/domain/chat_repository.dart`),
+never on a concrete data source directly, so the backend can keep evolving without touching the UI.
 
 ## Commands
 
 ```powershell
 flutter pub get                     # install dependencies
-flutter run                         # run the app (uses LocalChatRepository mock by default)
-flutter run --dart-define=OPENAI_API_KEY=your_key    # run wired to OpenAI instead of the mock
-flutter run --dart-define=OPENAI_API_KEY=your_key --dart-define=OPENAI_MODEL=gpt-5-mini  # override model
-flutter run --dart-define=OPENROUTER_API_KEY=your_key       # run wired to OpenRouter.ai's free-model router
-flutter run --dart-define=FREEROUTER_ENABLED=true            # run wired to a self-hosted FreeRouter instance
+flutter run                         # run the app (uses LocalChatRepository mock, no backend needed)
+flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000   # run wired to a local backend instance
 flutter test                        # run all tests
 flutter test test/chat_repository_test.dart          # run a single test file
 flutter analyze                     # lint/static analysis (flutter_lints + analysis_options.yaml)
 ```
+
+For the backend: see `backend/README.md` (venv setup, `uvicorn app.main:app`, Auth0 config, tests).
+`run_local_backend.bat` launches the Flutter client in Chrome pre-wired to `http://127.0.0.1:8000` — start
+the backend first.
 
 There is no separate build/lint script beyond the standard Flutter CLI; this is a normal `flutter create`-based
 project (Android + Web scaffolding present, iOS/others not set up).
@@ -36,58 +37,47 @@ project (Android + Web scaffolding present, iOS/others not set up).
   constructed with a `ChatRepository` injected via constructor — it has zero knowledge of HTTP, SQL, or any
   specific backend. Any new persistence/AI backend is added as a new implementation in
   `lib/features/chat/data/` and swapped in at the single call site in `lib/main.dart`.
-- **Existing implementations** (`lib/features/chat/data/`):
-  - `LocalChatRepository` — in-memory mock, used when no other backend is selected. Default for local dev.
-  - `OpenAiChatRepository` — calls OpenAI's Responses API (`POST /v1/responses`) directly from the client,
-    truncates history to the last 16 non-pending messages, and prepends a fixed `_systemPrompt` as a
-    `developer` role message. Selected when `OPENAI_API_KEY` is non-empty (and no other backend takes
-    priority — see below). Also used as the optional fallback target for the two router repositories.
-  - `OpenRouterChatRepository` — calls OpenRouter.ai's hosted "Free Models Router"
-    (`POST https://openrouter.ai/api/v1/chat/completions`, default model `openrouter/free`), a separate
-    hosted HTTPS service with its own API key. Selected when `OPENROUTER_API_KEY` is non-empty. Supports
-    retry with exponential backoff + jitter on transient failures (timeout/429/5xx) and an optional
-    `fallback` repository (see `LLM_FALLBACK_ENABLED` below). Sends image attachments as multimodal
-    `image_url` content parts.
-  - `FreeRouterChatRepository` — talks to a self-hosted [FreeRouter](https://github.com/openfreerouter/freerouter)
-    instance's OpenAI-compatible `/v1/chat/completions` endpoint (default `http://localhost:18800`). It is a
-    router/proxy only — "free" depends entirely on how FreeRouter's own tiers/providers are configured, not
-    on anything this client does. Selected when `FREEROUTER_ENABLED=true`; same retry/backoff and optional
-    `fallback` support as `OpenRouterChatRepository`. Has a `healthCheck()` helper (not auto-wired into the
-    request path).
-  - `DatabaseChatRepository` — unimplemented placeholder (`throw UnimplementedError`) intended as the
-    template for wiring a real backend (Firestore, Supabase, custom API, SQLite, etc.).
-- **Backend selection happens in `lib/main.dart`**: `ChatApp` reads all config via `String.fromEnvironment` /
-  `bool.fromEnvironment` / `int.fromEnvironment` (Dart defines, not `.env` files). Priority order, highest
-  first: `FREEROUTER_ENABLED=true` → `FreeRouterChatRepository`; else `OPENROUTER_API_KEY` set →
-  `OpenRouterChatRepository`; else `OPENAI_API_KEY` set → `OpenAiChatRepository`; else `LocalChatRepository`.
-  If `LLM_FALLBACK_ENABLED=true` and `OPENAI_API_KEY` is also set, both router repositories are constructed
-  with `OpenAiChatRepository` as their `fallback`, used only for transient failures. There is no runtime
-  config UI for any of this — it's all compile-time via `--dart-define`. See the README's FreeRouter/
-  OpenRouter sections for the full flag tables.
+- **Active implementations** (`lib/features/chat/data/`):
+  - `LocalChatRepository` — in-memory mock, used when no backend URL is configured. Default for local dev.
+  - `ApiChatRepository` — the production path. Calls the FastAPI backend's `/v1/conversations` and
+    `/v1/auth/session` endpoints; holds no LLM provider key at all (that lives server-side in the backend's
+    LLM Gateway). Resumes the authenticated identity's most recent conversation on load rather than always
+    starting fresh (`_resolveBackendConversationId`), and sends either a real backend session token or the
+    backend's dev-mode `X-Dev-Tenant-Id`/`X-Dev-User-Id` headers (see `API_DEV_TENANT_ID`/`API_DEV_USER_ID`
+    below — a stand-in until real Auth0 login exists client-side).
+  - `DatabaseChatRepository` — unimplemented placeholder (`throw UnimplementedError`); superseded by
+    `ApiChatRepository` now that a real backend exists, kept only as the original template/reference.
+- **Legacy implementations, retained but not wired into `main.dart`** (`lib/features/chat/data/`):
+  `OpenAiChatRepository`, `OpenRouterChatRepository`, `FreeRouterChatRepository` — these called LLM
+  providers directly from the client with an API key embedded at build time via `--dart-define`, which is
+  exactly the risk `ApiChatRepository` was built to close. Their tests still exist and still pass; the
+  classes themselves are unreachable from `main.dart` and should stay that way — extend the backend's LLM
+  Gateway (`backend/app/modules/llm_gateway/`) instead of resurrecting one of these.
+- **Backend selection happens in `lib/main.dart`**: `ChatApp` reads config via `String.fromEnvironment`
+  (Dart defines, not `.env` files — those exist only in `backend/`). If `API_BASE_URL` is set →
+  `ApiChatRepository`; otherwise → `LocalChatRepository`. That's the entire priority chain now. There is no
+  runtime config UI for any of this — it's all compile-time via `--dart-define`.
 - **Domain model**: `ChatMessage` (`lib/features/chat/domain/chat_message.dart`) is an immutable value type
   with `copyWith`; `ChatRole` is `user` or `assistant`. Pending/in-flight assistant messages use
   `isPending: true` so the UI can find-and-remove the "Thinking..." bubble once the real reply arrives.
   `imageBytes`/`imageMimeType` optionally carry a user-attached image (picked via `image_picker` in
-  `chat_page.dart`); only populated on user messages, and only `OpenAiChatRepository`/
-  `OpenRouterChatRepository` currently forward it to the model as multimodal content.
-- **Security note**: `OpenAiChatRepository` and `OpenRouterChatRepository` call their respective APIs
-  directly from the client with the API key embedded at build time via `--dart-define`. The README
-  explicitly flags that production apps should proxy through a backend instead of shipping the key in the
-  client — keep this in mind before extending these further rather than treating them as production-ready
-  as-is. `FreeRouterChatRepository` keeps provider API keys out of the client entirely (they live in
-  FreeRouter's own config), but if `FREEROUTER_API_KEY` is used for FreeRouter's own endpoint auth, the same
-  "don't ship secrets in a public client build" caveat applies to it too.
+  `chat_page.dart`); only populated on user messages. `ApiChatRepository` doesn't forward it to the backend
+  yet (the Chat Module doesn't accept images server-side — RAG/multimodal ingestion is a later phase), so
+  it currently only affects local display.
+- **Security note**: no LLM provider API key is embedded in this client at all (plan risk B1, closed). All
+  provider calls, retry/backoff/circuit-breaker, and secrets live server-side in `backend/app/modules/llm_gateway/`
+  — see `backend/README.md` and `backend/.env.example`. The legacy `OpenAiChatRepository`/
+  `OpenRouterChatRepository` classes still demonstrate the old client-embedded-key pattern in their own
+  files/tests; don't reintroduce it by wiring them back into `main.dart`.
 - **Theming**: `lib/core/app_theme.dart` provides Material 3 light/dark `ThemeData` via `ColorScheme.fromSeed`;
   `main.dart` wires both into `MaterialApp` with `themeMode: ThemeMode.system`.
-- **Testing pattern**: `OpenAiChatRepository`, `OpenRouterChatRepository`, and `FreeRouterChatRepository` all
-  accept an injectable `http.Client`, which is how `test/openai_chat_repository_test.dart`,
-  `test/open_router_chat_repository_test.dart`, and `test/free_router_chat_repository_test.dart` swap in
-  `MockClient` from `package:http/testing.dart` to assert on outgoing request bodies/headers (and exercise
-  retry/fallback behavior) without hitting the network.
-- **`run_openrouter.bat`**: a Windows convenience launcher that runs `flutter run -d chrome` with
-  `OPENROUTER_API_KEY` set. The committed copy uses a placeholder (`YOUR_API_KEY_HERE`) — fill in a real key
-  locally only, and never commit one back into this file.
+- **Testing pattern**: `ApiChatRepository`, and the legacy `OpenAiChatRepository`/`OpenRouterChatRepository`/
+  `FreeRouterChatRepository`, all accept an injectable `http.Client`, which is how
+  `test/api_chat_repository_test.dart` and the legacy repos' test files swap in `MockClient` from
+  `package:http/testing.dart` to assert on outgoing request bodies/headers without hitting the network.
+- **`run_local_backend.bat`**: a Windows convenience launcher that runs `flutter run -d chrome` with
+  `API_BASE_URL` pointed at `http://127.0.0.1:8000`. Start the backend (`backend/README.md`) first.
 - **`freerouter/`** (git-ignored) and **`freerouter_integration_spec.md`**: a local clone of the
-  self-hosted FreeRouter project used during development of `FreeRouterChatRepository`, plus the design spec
-  that integration was built from. Neither is part of this app's build; `freerouter/` is excluded from
-  version control because it's its own separate git repository.
+  self-hosted FreeRouter project used during development of the now-legacy `FreeRouterChatRepository`, plus
+  the design spec that integration was built from. Neither is part of this app's build; `freerouter/` is
+  excluded from version control because it's its own separate git repository.
