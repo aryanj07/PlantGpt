@@ -5,7 +5,7 @@ A ChatGPT-style Flutter app with the database linkage isolated behind a reposito
 ## What is included
 
 - Chat screen with assistant/user bubbles
-- Message composer with loading state
+- Message composer with loading state and optional image attachment (via `image_picker`)
 - OpenAI Responses API repository that can behave like ChatGPT when an API key is supplied
 - FreeRouter repository for routing chat requests through a self-hosted free-model router
 - OpenRouter repository for routing chat requests through OpenRouter.ai's hosted free-model router
@@ -23,7 +23,12 @@ The UI only talks to `ChatRepository`:
 abstract class ChatRepository {
   Future<List<ChatMessage>> loadMessages(String conversationId);
   Future<void> clearMessages(String conversationId);
-  Future<ChatMessage> saveUserMessage({required String conversationId, required String content});
+  Future<ChatMessage> saveUserMessage({
+    required String conversationId,
+    required String content,
+    Uint8List? imageBytes,
+    String? imageMimeType,
+  });
   Future<ChatMessage> createAssistantReply({required String conversationId, required String userMessage});
 }
 ```
@@ -35,13 +40,7 @@ To connect a real database, add another implementation in `lib/features/chat/dat
 - `SupabaseChatRepository` for Supabase
 - `SqliteChatRepository` for local/offline storage
 
-Then replace this line in `lib/main.dart`:
-
-```dart
-home: ChatPage(repository: LocalChatRepository()),
-```
-
-with your real repository.
+Then swap the repository passed into `ChatPage` in `lib/main.dart` (`ChatApp.build`) for your real one.
 
 ## OpenAI setup
 
