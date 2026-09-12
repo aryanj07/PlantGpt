@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import '../domain/chat_message.dart';
 import '../domain/chat_repository.dart';
 
-class OpenAiChatRepository implements ChatRepository {
+class OpenAiChatRepository extends ChatRepository {
   OpenAiChatRepository({
     required this.apiKey,
     this.model = 'gpt-5',

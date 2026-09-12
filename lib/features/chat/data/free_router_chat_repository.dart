@@ -53,7 +53,7 @@ class FreeRouterChatException implements Exception {
 /// response is actually free depends entirely on how FreeRouter's own
 /// tiers/providers are configured. This class only knows how to talk to
 /// FreeRouter; it never decides which upstream model is "free".
-class FreeRouterChatRepository implements ChatRepository {
+class FreeRouterChatRepository extends ChatRepository {
   FreeRouterChatRepository({
     required this.baseUrl,
     this.model = 'auto',

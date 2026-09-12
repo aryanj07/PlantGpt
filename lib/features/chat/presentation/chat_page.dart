@@ -111,15 +111,16 @@ class _ChatPageState extends State<ChatPage> {
       imageMimeType: imageMimeType,
     );
 
+    final pendingId = 'pending-${DateTime.now().microsecondsSinceEpoch}';
     if (!mounted) return;
     setState(() {
       _messages.add(userMessage);
       _messages.add(
         ChatMessage(
-          id: 'pending-${DateTime.now().microsecondsSinceEpoch}',
+          id: pendingId,
           conversationId: _conversationId,
           role: ChatRole.assistant,
-          content: 'Thinking...',
+          content: '',
           createdAt: DateTime.now(),
           isPending: true,
         ),
@@ -127,28 +128,47 @@ class _ChatPageState extends State<ChatPage> {
     });
     _scrollToBottom();
 
-    ChatMessage assistantMessage;
+    // streamAssistantReply (plan ADR 5) renders tokens as they arrive for
+    // repositories that support it (ApiChatRepository); for every other
+    // implementation the default in ChatRepository just emits the full
+    // reply as one event, so this same loop covers both cases.
+    final buffer = StringBuffer();
     try {
-      assistantMessage = await widget.repository.createAssistantReply(
+      await for (final delta in widget.repository.streamAssistantReply(
         conversationId: _conversationId,
         userMessage: text,
-      );
+      )) {
+        buffer.write(delta);
+        _updatePendingMessage(pendingId, buffer.toString());
+      }
     } catch (error) {
-      assistantMessage = ChatMessage(
-        id: 'error-${DateTime.now().microsecondsSinceEpoch}',
-        conversationId: _conversationId,
-        role: ChatRole.assistant,
-        content: 'Sorry, I could not get a response: $error',
-        createdAt: DateTime.now(),
+      final partial = buffer.toString();
+      _updatePendingMessage(
+        pendingId,
+        partial.isEmpty
+            ? 'Sorry, I could not get a response: $error'
+            : '$partial\n\n[Response interrupted: $error]',
       );
     }
 
     if (!mounted) return;
     setState(() {
-      _messages
-        ..removeWhere((message) => message.isPending)
-        ..add(assistantMessage);
+      final index = _messages.indexWhere((message) => message.id == pendingId);
+      if (index != -1) {
+        _messages[index] = _messages[index].copyWith(isPending: false);
+      }
       _isSending = false;
+    });
+    _scrollToBottom();
+  }
+
+  void _updatePendingMessage(String pendingId, String content) {
+    if (!mounted) return;
+    setState(() {
+      final index = _messages.indexWhere((message) => message.id == pendingId);
+      if (index != -1) {
+        _messages[index] = _messages[index].copyWith(content: content);
+      }
     });
     _scrollToBottom();
   }
@@ -296,7 +316,15 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (message.content.isNotEmpty)
+              if (message.isPending && message.content.isEmpty)
+                Text(
+                  'Thinking…',
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    color: isUser ? colors.onPrimary : colors.onSurface,
+                    fontStyle: FontStyle.italic,
+                  ),
+                )
+              else if (message.content.isNotEmpty)
                 Text(
                   message.content,
                   style: theme.textTheme.bodyLarge?.copyWith(

@@ -4,6 +4,7 @@ createAssistantReply) so ApiChatRepository (Phase 1, owner: Aranj) can be
 built directly against this without any client-side redesign."""
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 
 from app.modules.auth.schemas import CurrentIdentity
 from app.modules.auth.service import get_current_identity
@@ -43,3 +44,22 @@ async def post_message(
         tenant_id=identity.tenant_id, conversation_id=conversation_id, content=body.content
     )
     return [MessageOut(**user_msg.__dict__), MessageOut(**assistant_msg.__dict__)]
+
+
+@router.post("/conversations/{conversation_id}/messages/stream")
+async def post_message_stream(
+    conversation_id: str,
+    body: CreateMessageRequest,
+    identity: CurrentIdentity = Depends(get_current_identity),
+) -> StreamingResponse:
+    """SSE variant of post_message (plan ADR 5). Auth happens here, before
+    any bytes are sent, so an invalid token still gets a normal 401 - once
+    the StreamingResponse starts, service.stream_assistant_reply reports
+    every further failure as an SSE event instead."""
+    return StreamingResponse(
+        service.stream_assistant_reply(
+            tenant_id=identity.tenant_id, conversation_id=conversation_id, content=body.content
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

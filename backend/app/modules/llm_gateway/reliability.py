@@ -20,7 +20,7 @@ that migration is a Phase 5 (Reliability & Observability) task, not this one.
 import asyncio
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
 
 DEFAULT_BASE_DELAY_MS = 300
@@ -91,3 +91,35 @@ async def call_with_retry(
             delay_seconds = (base_delay_ms * (2**attempt) + random.randint(0, jitter_ms)) / 1000
             await asyncio.sleep(delay_seconds)
             attempt += 1
+
+
+async def stream_with_retry(
+    stream_fn: Callable[[], AsyncIterator[str]],
+    *,
+    max_retries: int = 2,
+    base_delay_ms: int = DEFAULT_BASE_DELAY_MS,
+    jitter_ms: int = DEFAULT_JITTER_MS,
+) -> AsyncIterator[str]:
+    """Retries only apply before the first chunk is yielded. Once a chunk has
+    reached the caller (and, in the Gateway's case, been forwarded to an SSE
+    client), there is no safe way to retry without duplicating or corrupting
+    already-sent output - so a failure past that point always propagates."""
+    attempt = 0
+    while True:
+        generator = stream_fn()
+        try:
+            first_chunk = await generator.__anext__()
+        except StopAsyncIteration:
+            return
+        except ProviderError as exc:
+            if not exc.is_transient or attempt >= max_retries:
+                raise
+            delay_seconds = (base_delay_ms * (2**attempt) + random.randint(0, jitter_ms)) / 1000
+            await asyncio.sleep(delay_seconds)
+            attempt += 1
+            continue
+
+        yield first_chunk
+        async for chunk in generator:
+            yield chunk
+        return

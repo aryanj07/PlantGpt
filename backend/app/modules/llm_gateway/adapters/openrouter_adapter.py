@@ -7,11 +7,17 @@ llm_gateway/reliability.py and applied by the Gateway to every adapter
 uniformly (the retry/backoff formula itself is the one this adapter's
 Flutter counterpart already proved out).
 
+Streaming (stream=True, plan ADR 5 / Phase 2) uses the standard OpenAI-
+compatible chat-completions SSE format: each chunk is
+{"choices":[{"delta":{"content":"..."}}]}, terminated by a literal
+"data: [DONE]" line.
+
 Image/multimodal forwarding (the one capability this repository had that
 OpenAI's didn't) is not ported yet - the Chat module doesn't accept image
 uploads server-side yet either, so there's nothing to forward.
 """
 
+import json
 from collections.abc import AsyncIterator
 
 import httpx
@@ -40,6 +46,14 @@ class OpenRouterAdapter(ProviderAdapter):
         self._site_url = site_url
         self._site_name = site_name
 
+    def _headers(self) -> dict:
+        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
+        if self._site_url:
+            headers["HTTP-Referer"] = self._site_url
+        if self._site_name:
+            headers["X-Title"] = self._site_name
+        return headers
+
     async def send(
         self, *, system_prompt: str, history: list[dict], user_message: str, model: str, stream: bool
     ) -> AsyncIterator[str]:
@@ -48,11 +62,12 @@ class OpenRouterAdapter(ProviderAdapter):
         messages.append({"role": "user", "content": user_message})
 
         body = {"model": model or self._model, "messages": messages}
-        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
-        if self._site_url:
-            headers["HTTP-Referer"] = self._site_url
-        if self._site_name:
-            headers["X-Title"] = self._site_name
+        headers = self._headers()
+
+        if stream:
+            async for chunk in self._send_streaming(body, headers):
+                yield chunk
+            return
 
         try:
             response = await self._client.post(
@@ -63,28 +78,7 @@ class OpenRouterAdapter(ProviderAdapter):
         except httpx.HTTPError as exc:
             raise ProviderError(provider="openrouter", detail=str(exc), is_transient=True) from exc
 
-        if response.status_code == 429:
-            raise ProviderError(
-                provider="openrouter", detail="rate limited", is_transient=True, status_code=429
-            )
-        if response.status_code in (502, 503, 504):
-            raise ProviderError(
-                provider="openrouter",
-                detail="provider failure",
-                is_transient=True,
-                status_code=response.status_code,
-            )
-        if response.status_code in (401, 403):
-            raise ProviderError(
-                provider="openrouter", detail="auth failure", is_transient=False, status_code=response.status_code
-            )
-        if response.status_code != 200:
-            raise ProviderError(
-                provider="openrouter",
-                detail=f"request failed with status {response.status_code}",
-                is_transient=False,
-                status_code=response.status_code,
-            )
+        _raise_for_status(response.status_code)
 
         data = response.json()
         choices = data.get("choices") or []
@@ -95,3 +89,51 @@ class OpenRouterAdapter(ProviderAdapter):
         if not content:
             raise ProviderError(provider="openrouter", detail="empty content", is_transient=False)
         yield content
+
+    async def _send_streaming(self, body: dict, headers: dict) -> AsyncIterator[str]:
+        stream_body = {**body, "stream": True}
+        try:
+            async with self._client.stream(
+                "POST", CHAT_COMPLETIONS_URL, json=stream_body, headers=headers, timeout=self._timeout
+            ) as response:
+                if response.status_code != 200:
+                    error_body = await response.aread()
+                    _raise_for_status(response.status_code, detail=error_body.decode(errors="replace")[:300])
+
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[len("data:") :].strip()
+                    if not payload or payload == "[DONE]":
+                        continue
+
+                    chunk = json.loads(payload)
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = (choices[0].get("delta") or {}).get("content")
+                    if delta:
+                        yield delta
+        except httpx.TimeoutException as exc:
+            raise ProviderError(provider="openrouter", detail="request timed out", is_transient=True) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(provider="openrouter", detail=str(exc), is_transient=True) from exc
+
+
+def _raise_for_status(status_code: int, *, detail: str | None = None) -> None:
+    if status_code == 200:
+        return
+    if status_code == 429:
+        raise ProviderError(provider="openrouter", detail="rate limited", is_transient=True, status_code=429)
+    if status_code in (502, 503, 504):
+        raise ProviderError(
+            provider="openrouter", detail="provider failure", is_transient=True, status_code=status_code
+        )
+    if status_code in (401, 403):
+        raise ProviderError(provider="openrouter", detail="auth failure", is_transient=False, status_code=status_code)
+    raise ProviderError(
+        provider="openrouter",
+        detail=detail or f"request failed with status {status_code}",
+        is_transient=False,
+        status_code=status_code,
+    )

@@ -66,6 +66,18 @@ Map<String, dynamic> _messageJson({
   };
 }
 
+http.StreamedResponse _sseStream(
+  List<Map<String, dynamic>> events, {
+  int statusCode = 200,
+}) {
+  final body = events.map((e) => 'data: ${jsonEncode(e)}\n\n').join();
+  return http.StreamedResponse(
+    Stream.value(utf8.encode(body)),
+    statusCode,
+    headers: {'content-type': 'text/event-stream'},
+  );
+}
+
 void main() {
   test(
       'loadMessages creates a backend conversation when none exist yet, then returns a welcome message',
@@ -322,5 +334,111 @@ void main() {
     // without re-listing.
     await repository.loadMessages('local-session-1');
     expect(listCount, 1);
+  });
+
+  test('streamAssistantReply yields incremental deltas and stops at done',
+      () async {
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'GET' && request.url.path == '/v1/conversations') {
+        return http.StreamedResponse(
+          Stream.value(
+              utf8.encode(jsonEncode([_conversationJson('backend-conv-1')]))),
+          200,
+        );
+      }
+      return _sseStream([
+        {
+          'type': 'user_message',
+          'message': _messageJson(id: 'm1', role: 'user', content: 'hi')
+        },
+        {'type': 'delta', 'content': 'Kiln '},
+        {'type': 'delta', 'content': 'temp '},
+        {'type': 'delta', 'content': 'is 1450C.'},
+        {
+          'type': 'done',
+          'message': _messageJson(
+              id: 'm2', role: 'assistant', content: 'Kiln temp is 1450C.'),
+        },
+      ]);
+    });
+
+    final repository = ApiChatRepository(
+      baseUrl: 'https://api.plantgpt.test',
+      devTenantId: 'default',
+      devUserId: 'dev-user',
+      client: client,
+    );
+
+    final deltas = await repository
+        .streamAssistantReply(
+            conversationId: 'local-session-1', userMessage: 'hi')
+        .toList();
+
+    expect(deltas, ['Kiln ', 'temp ', 'is 1450C.']);
+  });
+
+  test('streamAssistantReply throws on a mid-stream error event', () async {
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'GET' && request.url.path == '/v1/conversations') {
+        return http.StreamedResponse(
+          Stream.value(
+              utf8.encode(jsonEncode([_conversationJson('backend-conv-1')]))),
+          200,
+        );
+      }
+      return _sseStream([
+        {'type': 'delta', 'content': 'partial'},
+        {'type': 'error', 'detail': 'provider unavailable'},
+      ]);
+    });
+
+    final repository = ApiChatRepository(
+      baseUrl: 'https://api.plantgpt.test',
+      devTenantId: 'default',
+      devUserId: 'dev-user',
+      client: client,
+    );
+
+    final stream = repository.streamAssistantReply(
+      conversationId: 'local-session-1',
+      userMessage: 'hi',
+    );
+
+    final received = <String>[];
+    await expectLater(
+      stream.listen(received.add).asFuture(),
+      throwsA(isA<ApiChatException>()),
+    );
+    expect(received, ['partial']);
+  });
+
+  test('streamAssistantReply throws ApiChatException on a non-200 status',
+      () async {
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'GET' && request.url.path == '/v1/conversations') {
+        return http.StreamedResponse(
+          Stream.value(
+              utf8.encode(jsonEncode([_conversationJson('backend-conv-1')]))),
+          200,
+        );
+      }
+      return http.StreamedResponse(
+          Stream.value(utf8.encode('server error')), 500);
+    });
+
+    final repository = ApiChatRepository(
+      baseUrl: 'https://api.plantgpt.test',
+      devTenantId: 'default',
+      devUserId: 'dev-user',
+      client: client,
+    );
+
+    expect(
+      () => repository
+          .streamAssistantReply(
+              conversationId: 'local-session-1', userMessage: 'hi')
+          .toList(),
+      throwsA(isA<ApiChatException>()),
+    );
   });
 }

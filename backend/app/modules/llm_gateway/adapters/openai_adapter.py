@@ -5,8 +5,16 @@ max_output_tokens=1200. Retry/backoff/circuit-breaker are NOT reimplemented
 here - they're generalized once in llm_gateway/reliability.py and applied by
 the Gateway to every adapter uniformly, closing plan risk B5 (the Flutter
 version of this repository had no retry at all).
+
+Streaming (stream=True, plan ADR 5 / Phase 2) uses the Responses API's SSE
+event stream directly rather than faking incremental delivery - event
+shapes confirmed against openai-python's generated types
+(response_text_delta_event.py / response_completed_event.py): each text
+chunk arrives as {"type": "response.output_text.delta", "delta": "..."},
+terminated by {"type": "response.completed", ...}.
 """
 
+import json
 from collections.abc import AsyncIterator
 
 import httpx
@@ -34,14 +42,17 @@ class OpenAiAdapter(ProviderAdapter):
     async def send(
         self, *, system_prompt: str, history: list[dict], user_message: str, model: str, stream: bool
     ) -> AsyncIterator[str]:
-        # V1 is non-streaming end to end (plan Section N Phase 2 adds real
-        # streaming) - always makes one call and yields the full text once.
         input_messages = [{"role": "developer", "content": system_prompt}]
         input_messages.extend({"role": m["role"], "content": m["content"]} for m in history)
         input_messages.append({"role": "user", "content": user_message})
 
         body = {"model": model or self._model, "input": input_messages, "max_output_tokens": 1200}
         headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
+
+        if stream:
+            async for chunk in self._send_streaming(body, headers):
+                yield chunk
+            return
 
         try:
             response = await self._client.post(
@@ -52,24 +63,64 @@ class OpenAiAdapter(ProviderAdapter):
         except httpx.HTTPError as exc:
             raise ProviderError(provider="openai", detail=str(exc), is_transient=True) from exc
 
-        if response.status_code == 429:
-            raise ProviderError(provider="openai", detail="rate limited", is_transient=True, status_code=429)
-        if response.status_code in (502, 503, 504):
-            raise ProviderError(
-                provider="openai", detail="provider failure", is_transient=True, status_code=response.status_code
-            )
-        if response.status_code != 200:
-            raise ProviderError(
-                provider="openai",
-                detail=f"request failed with status {response.status_code}",
-                is_transient=False,
-                status_code=response.status_code,
-            )
+        _raise_for_status(response.status_code)
 
         text = _extract_output_text(response.json())
         if not text:
             raise ProviderError(provider="openai", detail="empty response", is_transient=False)
         yield text
+
+    async def _send_streaming(self, body: dict, headers: dict) -> AsyncIterator[str]:
+        stream_body = {**body, "stream": True}
+        try:
+            async with self._client.stream(
+                "POST", RESPONSES_URL, json=stream_body, headers=headers, timeout=self._timeout
+            ) as response:
+                if response.status_code != 200:
+                    error_body = await response.aread()
+                    _raise_for_status(response.status_code, detail=error_body.decode(errors="replace")[:300])
+
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[len("data:") :].strip()
+                    if not payload:
+                        continue
+
+                    event = json.loads(payload)
+                    event_type = event.get("type")
+
+                    if event_type == "response.output_text.delta":
+                        delta = event.get("delta")
+                        if delta:
+                            yield delta
+                    elif event_type in ("response.failed", "response.incomplete", "error"):
+                        raise ProviderError(
+                            provider="openai",
+                            detail=f"stream error: {json.dumps(event)[:300]}",
+                            is_transient=True,
+                        )
+                    elif event_type == "response.completed":
+                        return
+        except httpx.TimeoutException as exc:
+            raise ProviderError(provider="openai", detail="request timed out", is_transient=True) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(provider="openai", detail=str(exc), is_transient=True) from exc
+
+
+def _raise_for_status(status_code: int, *, detail: str | None = None) -> None:
+    if status_code == 200:
+        return
+    if status_code == 429:
+        raise ProviderError(provider="openai", detail="rate limited", is_transient=True, status_code=429)
+    if status_code in (502, 503, 504):
+        raise ProviderError(provider="openai", detail="provider failure", is_transient=True, status_code=status_code)
+    raise ProviderError(
+        provider="openai",
+        detail=detail or f"request failed with status {status_code}",
+        is_transient=False,
+        status_code=status_code,
+    )
 
 
 def _extract_output_text(data: dict) -> str:

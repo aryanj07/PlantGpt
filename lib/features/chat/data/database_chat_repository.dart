@@ -7,7 +7,7 @@ import '../domain/chat_repository.dart';
 ///
 /// Keep mapping code in this file so widgets never depend on table names,
 /// HTTP routes, Firestore collections, or Supabase schemas.
-class DatabaseChatRepository implements ChatRepository {
+class DatabaseChatRepository extends ChatRepository {
   @override
   Future<List<ChatMessage>> loadMessages(String conversationId) {
     throw UnimplementedError('Connect this to your message query.');

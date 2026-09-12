@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import '../domain/chat_message.dart';
 import '../domain/chat_repository.dart';
 
-class LocalChatRepository implements ChatRepository {
+class LocalChatRepository extends ChatRepository {
   final Map<String, List<ChatMessage>> _messagesByConversation = {};
 
   @override

@@ -43,7 +43,7 @@ class ApiChatException implements Exception {
 /// creating one only if none exists yet (`_resolveBackendConversationId`) -
 /// so chat history survives an app restart based on who you are, not on
 /// which local string happened to be passed in.
-class ApiChatRepository implements ChatRepository {
+class ApiChatRepository extends ChatRepository {
   ApiChatRepository({
     required String baseUrl,
     this.sessionToken,
@@ -176,6 +176,68 @@ class ApiChatRepository implements ChatRepository {
     // calls or multi-turn continuations in between.
     final assistantJson = decoded.last as Map<String, dynamic>;
     return _messageFromJson(assistantJson, conversationId);
+  }
+
+  @override
+  Stream<String> streamAssistantReply({
+    required String conversationId,
+    required String userMessage,
+  }) async* {
+    final backendId = await _resolveBackendConversationId(conversationId);
+    final request = http.Request(
+      'POST',
+      Uri.parse('$baseUrl/v1/conversations/$backendId/messages/stream'),
+    )
+      ..headers.addAll(_headers)
+      ..body = jsonEncode({'content': userMessage});
+
+    final http.StreamedResponse response;
+    try {
+      response = await _client.send(request).timeout(timeout);
+    } on TimeoutException {
+      throw const ApiChatException('The backend took too long to respond.');
+    } catch (error) {
+      throw ApiChatException('Could not reach the backend: $error');
+    }
+
+    if (response.statusCode == 401) {
+      throw const ApiChatException('Not authenticated. Please sign in again.');
+    }
+    if (response.statusCode != 200) {
+      final body = await response.stream.bytesToString();
+      throw ApiChatException(
+        'Backend request failed with status ${response.statusCode}.',
+        technicalDetails: body,
+      );
+    }
+
+    // The backend only ever emits single-line JSON per "data:" line (see
+    // backend/app/modules/chat/service.py's _sse helper) - no multi-line
+    // data, no other SSE fields (event:/id:/retry:) - so this simple
+    // line-by-line parse is enough; it doesn't need to be a general SSE
+    // client.
+    final lines =
+        response.stream.transform(utf8.decoder).transform(const LineSplitter());
+
+    await for (final line in lines) {
+      if (!line.startsWith('data:')) continue;
+      final payload = line.substring(5).trim();
+      if (payload.isEmpty) continue;
+
+      final event = jsonDecode(payload) as Map<String, dynamic>;
+      switch (event['type']) {
+        case 'delta':
+          final content = event['content'] as String?;
+          if (content != null && content.isNotEmpty) yield content;
+        case 'error':
+          throw ApiChatException(
+            event['detail'] as String? ??
+                'The backend reported a streaming error.',
+          );
+        case 'done':
+          return;
+      }
+    }
   }
 
   /// Resumes the caller's most recent existing backend conversation, or

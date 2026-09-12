@@ -52,7 +52,7 @@ class OpenRouterChatException implements Exception {
 /// This is a separate, hosted OpenRouter.ai feature — unrelated to the
 /// self-hosted openfreerouter/freerouter project used by
 /// [FreeRouterChatRepository]. Requires a real OpenRouter.ai API key.
-class OpenRouterChatRepository implements ChatRepository {
+class OpenRouterChatRepository extends ChatRepository {
   OpenRouterChatRepository({
     required this.apiKey,
     this.model = 'openrouter/free',

@@ -22,7 +22,7 @@ http.Response _okResponse(String content) {
   );
 }
 
-class _FakeFallback implements ChatRepository {
+class _FakeFallback extends ChatRepository {
   final List<ChatMessage> stored = [];
 
   @override

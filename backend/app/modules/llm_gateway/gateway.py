@@ -18,13 +18,19 @@ by the Cost/Quota Module - GatewayReply carries token fields as placeholders
 so that module has somewhere to plug in without another interface change.
 """
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from app.config import Settings, get_settings
 from app.modules.llm_gateway.adapters.base import ProviderAdapter
 from app.modules.llm_gateway.adapters.openai_adapter import OpenAiAdapter
 from app.modules.llm_gateway.adapters.openrouter_adapter import OpenRouterAdapter
-from app.modules.llm_gateway.reliability import CircuitBreaker, ProviderError, call_with_retry
+from app.modules.llm_gateway.reliability import (
+    CircuitBreaker,
+    ProviderError,
+    call_with_retry,
+    stream_with_retry,
+)
 
 SYSTEM_PROMPT = (
     "You are PlantGPT, a domain expert assistant for industrial plant "
@@ -105,6 +111,55 @@ class LLMGateway:
 
         detail = f" ({last_error})" if last_error else ""
         return GatewayReply(content=f"AI temporarily unavailable, your message was saved.{detail}", model_used="degraded")
+
+    async def generate_stream(
+        self, *, system_prompt: str, history: list[dict], user_message: str
+    ) -> AsyncIterator[str]:
+        """Same routing/breaker/retry-before-first-chunk behavior as
+        generate(), but yields text incrementally for SSE (plan ADR 5)
+        instead of returning one assembled GatewayReply. A route that fails
+        after already yielding some chunks can't be silently retried on a
+        different route without duplicating output already sent to the
+        client, so that case re-raises rather than falling through."""
+        if not self._routes:
+            yield (
+                "No LLM provider configured (set OPENAI_API_KEY or OPENROUTER_API_KEY). "
+                f'You said: "{user_message}"'
+            )
+            return
+
+        trimmed_history = history[-HISTORY_LIMIT:]
+        last_error: ProviderError | None = None
+
+        for route in self._routes:
+            if not route.breaker.allow_request():
+                continue
+
+            def _call_stream(route: _Route = route) -> AsyncIterator[str]:
+                return route.adapter.send(
+                    system_prompt=system_prompt or SYSTEM_PROMPT,
+                    history=trimmed_history,
+                    user_message=user_message,
+                    model=route.model,
+                    stream=True,
+                )
+
+            got_any_chunk = False
+            try:
+                async for chunk in stream_with_retry(_call_stream, max_retries=route.max_retries):
+                    got_any_chunk = True
+                    yield chunk
+                route.breaker.record_success()
+                return
+            except ProviderError as exc:
+                route.breaker.record_failure()
+                last_error = exc
+                if got_any_chunk:
+                    raise
+                continue
+
+        detail = f" ({last_error})" if last_error else ""
+        yield f"AI temporarily unavailable, your message was saved.{detail}"
 
 
 def build_llm_gateway(settings: Settings | None = None) -> LLMGateway:
