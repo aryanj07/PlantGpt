@@ -45,6 +45,10 @@ class OpenRouterAdapter(ProviderAdapter):
         self._timeout = timeout
         self._site_url = site_url
         self._site_name = site_name
+        # Set by the most recent send() call, read by the Gateway's
+        # Cost/Quota Module after a successful reply (plan Section H.1) -
+        # None if the response never included usage data.
+        self.last_usage: dict[str, int] | None = None
 
     def _headers(self) -> dict:
         headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
@@ -81,6 +85,7 @@ class OpenRouterAdapter(ProviderAdapter):
         _raise_for_status(response.status_code)
 
         data = response.json()
+        self.last_usage = _normalize_usage(data.get("usage"))
         choices = data.get("choices") or []
         if not choices:
             raise ProviderError(provider="openrouter", detail="empty choices", is_transient=False)
@@ -91,7 +96,10 @@ class OpenRouterAdapter(ProviderAdapter):
         yield content
 
     async def _send_streaming(self, body: dict, headers: dict) -> AsyncIterator[str]:
-        stream_body = {**body, "stream": True}
+        # include_usage asks for one extra final chunk carrying token counts
+        # (empty choices, top-level usage) - standard OpenAI-compatible
+        # stream_options, which OpenRouter proxies through.
+        stream_body = {**body, "stream": True, "stream_options": {"include_usage": True}}
         try:
             async with self._client.stream(
                 "POST", CHAT_COMPLETIONS_URL, json=stream_body, headers=headers, timeout=self._timeout
@@ -108,6 +116,9 @@ class OpenRouterAdapter(ProviderAdapter):
                         continue
 
                     chunk = json.loads(payload)
+                    usage = chunk.get("usage")
+                    if usage:
+                        self.last_usage = _normalize_usage(usage)
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -118,6 +129,16 @@ class OpenRouterAdapter(ProviderAdapter):
             raise ProviderError(provider="openrouter", detail="request timed out", is_transient=True) from exc
         except httpx.HTTPError as exc:
             raise ProviderError(provider="openrouter", detail=str(exc), is_transient=True) from exc
+
+
+def _normalize_usage(usage: dict | None) -> dict[str, int] | None:
+    if not usage:
+        return None
+    return {
+        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "completion_tokens": usage.get("completion_tokens", 0),
+        "total_tokens": usage.get("total_tokens", 0),
+    }
 
 
 def _raise_for_status(status_code: int, *, detail: str | None = None) -> None:

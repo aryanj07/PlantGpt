@@ -38,6 +38,10 @@ class OpenAiAdapter(ProviderAdapter):
         self._model = model
         self._client = client or httpx.AsyncClient()
         self._timeout = timeout
+        # Set by the most recent send() call, read by the Gateway's
+        # Cost/Quota Module after a successful reply (plan Section H.1) -
+        # None if the response never included usage data.
+        self.last_usage: dict[str, int] | None = None
 
     async def send(
         self, *, system_prompt: str, history: list[dict], user_message: str, model: str, stream: bool
@@ -65,7 +69,9 @@ class OpenAiAdapter(ProviderAdapter):
 
         _raise_for_status(response.status_code)
 
-        text = _extract_output_text(response.json())
+        data = response.json()
+        self.last_usage = _normalize_usage(data.get("usage"))
+        text = _extract_output_text(data)
         if not text:
             raise ProviderError(provider="openai", detail="empty response", is_transient=False)
         yield text
@@ -101,6 +107,9 @@ class OpenAiAdapter(ProviderAdapter):
                             is_transient=True,
                         )
                     elif event_type == "response.completed":
+                        self.last_usage = _normalize_usage(
+                            (event.get("response") or {}).get("usage")
+                        )
                         return
         except httpx.TimeoutException as exc:
             raise ProviderError(provider="openai", detail="request timed out", is_transient=True) from exc
@@ -121,6 +130,19 @@ def _raise_for_status(status_code: int, *, detail: str | None = None) -> None:
         is_transient=False,
         status_code=status_code,
     )
+
+
+def _normalize_usage(usage: dict | None) -> dict[str, int] | None:
+    """OpenAI's Responses API names these input_tokens/output_tokens -
+    normalized to the same {prompt_tokens, completion_tokens, total_tokens}
+    shape the Cost/Quota Module expects from every adapter."""
+    if not usage:
+        return None
+    return {
+        "prompt_tokens": usage.get("input_tokens", 0),
+        "completion_tokens": usage.get("output_tokens", 0),
+        "total_tokens": usage.get("total_tokens", 0),
+    }
 
 
 def _extract_output_text(data: dict) -> str:

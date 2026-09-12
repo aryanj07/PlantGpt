@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app.modules.chat.schemas import MessageOut
 from app.modules.chat.store import Conversation, Message, store
+from app.modules.cost.tracker import BudgetExceededError, CostTracker, get_cost_tracker
 from app.modules.llm_gateway.gateway import HISTORY_LIMIT, LLMGateway, get_llm_gateway
 
 
@@ -35,11 +36,13 @@ async def post_user_message(
     conversation_id: str,
     content: str,
     llm_gateway: LLMGateway | None = None,
+    cost_tracker: CostTracker | None = None,
 ) -> tuple[Message, Message]:
-    """Mirrors plan Section E: persist the user message first, then call the
-    LLM Gateway for the assistant reply. Rate limiting (step 5) and cost/quota
-    checks (step 7) are not wired in yet - those modules are still stubs
-    (Phase 1/2) and must sit here, before the gateway call, once implemented.
+    """Mirrors plan Section E: persist the user message first (step 6), then
+    the Cost/Quota Module's budget check (step 7) - before any LLM call, so
+    an over-budget tenant never even reaches a provider - then the LLM
+    Gateway for the assistant reply. Rate limiting (step 5) is still not
+    wired in (a separate Phase 1 task, not yet done).
     """
     conv = store.get_conversation(conversation_id=conversation_id, tenant_id=tenant_id)
     if conv is None:
@@ -49,6 +52,12 @@ async def post_user_message(
         conversation_id=conversation_id, tenant_id=tenant_id, role="user", content=content
     )
 
+    tracker = cost_tracker or get_cost_tracker()
+    try:
+        tracker.check_budget(tenant_id=tenant_id)
+    except BudgetExceededError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+
     prior_history = [
         {"role": m.role, "content": m.content}
         for m in store.list_messages(conversation_id=conversation_id, tenant_id=tenant_id)
@@ -57,6 +66,14 @@ async def post_user_message(
 
     gateway = llm_gateway or get_llm_gateway()
     reply = await gateway.generate(system_prompt="", history=prior_history, user_message=content)
+
+    if reply.prompt_tokens is not None and reply.completion_tokens is not None:
+        tracker.record(
+            tenant_id=tenant_id,
+            model=reply.model,
+            prompt_tokens=reply.prompt_tokens,
+            completion_tokens=reply.completion_tokens,
+        )
 
     assistant_message = store.add_message(
         conversation_id=conversation_id, tenant_id=tenant_id, role="assistant", content=reply.content
@@ -79,6 +96,7 @@ async def stream_assistant_reply(
     conversation_id: str,
     content: str,
     llm_gateway: LLMGateway | None = None,
+    cost_tracker: CostTracker | None = None,
 ) -> AsyncIterator[str]:
     """SSE body for POST .../messages/stream (plan ADR 5). Persists the user
     message up front exactly like post_user_message, then streams the
@@ -104,6 +122,26 @@ async def stream_assistant_reply(
     )
     yield _sse({"type": "user_message", "message": _message_payload(user_message)})
 
+    tracker = cost_tracker or get_cost_tracker()
+    try:
+        tracker.check_budget(tenant_id=tenant_id)
+    except BudgetExceededError as exc:
+        yield _sse({"type": "error", "detail": str(exc)})
+        yield _sse(
+            {
+                "type": "done",
+                "message": _message_payload(
+                    store.add_message(
+                        conversation_id=conversation_id,
+                        tenant_id=tenant_id,
+                        role="assistant",
+                        content=f"Message not sent: {exc}",
+                    )
+                ),
+            }
+        )
+        return
+
     prior_history = [
         {"role": m.role, "content": m.content}
         for m in store.list_messages(conversation_id=conversation_id, tenant_id=tenant_id)
@@ -120,6 +158,17 @@ async def stream_assistant_reply(
             yield _sse({"type": "delta", "content": delta})
     except Exception as exc:  # noqa: BLE001 - reported as an SSE event, not raised past a started stream
         yield _sse({"type": "error", "detail": str(exc)})
+
+    call_info = gateway.get_last_call_info()
+    if call_info is not None:
+        model, usage = call_info
+        if usage is not None:
+            tracker.record(
+                tenant_id=tenant_id,
+                model=model,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+            )
 
     full_text = "".join(buffer) or "AI temporarily unavailable, your message was saved."
     assistant_message = store.add_message(

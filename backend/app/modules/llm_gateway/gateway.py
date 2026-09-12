@@ -48,6 +48,7 @@ HISTORY_LIMIT = 16
 class GatewayReply:
     content: str
     model_used: str
+    model: str = ""
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
 
@@ -70,6 +71,17 @@ class LLMGateway:
 
     def __init__(self, routes: list[_Route]) -> None:
         self._routes = routes
+        self._last_route: _Route | None = None
+
+    def get_last_call_info(self) -> tuple[str, dict[str, int] | None] | None:
+        """(bare_model_id, usage_dict_or_None) for whichever route most
+        recently succeeded via generate() or generate_stream(), or None if
+        nothing has succeeded yet (unconfigured/degraded). Used by the
+        streaming path to record cost after the stream completes - the
+        non-streaming path gets the same info inline via GatewayReply."""
+        if self._last_route is None:
+            return None
+        return self._last_route.model, self._last_route.adapter.last_usage
 
     async def generate(self, *, system_prompt: str, history: list[dict], user_message: str) -> GatewayReply:
         if not self._routes:
@@ -103,7 +115,15 @@ class LLMGateway:
             try:
                 text = await call_with_retry(_call, max_retries=route.max_retries)
                 route.breaker.record_success()
-                return GatewayReply(content=text, model_used=f"{route.name}:{route.model}")
+                self._last_route = route
+                usage = route.adapter.last_usage or {}
+                return GatewayReply(
+                    content=text,
+                    model_used=f"{route.name}:{route.model}",
+                    model=route.model,
+                    prompt_tokens=usage.get("prompt_tokens"),
+                    completion_tokens=usage.get("completion_tokens"),
+                )
             except ProviderError as exc:
                 route.breaker.record_failure()
                 last_error = exc
@@ -150,6 +170,7 @@ class LLMGateway:
                     got_any_chunk = True
                     yield chunk
                 route.breaker.record_success()
+                self._last_route = route
                 return
             except ProviderError as exc:
                 route.breaker.record_failure()

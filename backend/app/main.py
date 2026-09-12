@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.modules.auth.router import router as auth_router
 from app.modules.chat.router import router as chat_router
+from app.modules.cost.router import router as cost_router
 from app.observability import RequestContextMiddleware
 
 
@@ -26,6 +27,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router, prefix="/v1/auth", tags=["auth"])
     app.include_router(chat_router, prefix="/v1", tags=["chat"])
+    app.include_router(cost_router, prefix="/v1/cost", tags=["cost"])
 
     @app.get("/health")
     def health() -> dict[str, str]:

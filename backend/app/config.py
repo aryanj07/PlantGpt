@@ -33,6 +33,11 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
 
+    # Flat per-tenant budget (plan Section G.1 quota_ledger, Q). One value
+    # for every tenant since there's no plan/tier data yet - real per-plan
+    # budgets are a later task once tenants/subscriptions exist.
+    default_monthly_budget_usd: float = 1.0
+
 
 @lru_cache
 def get_settings() -> Settings:
