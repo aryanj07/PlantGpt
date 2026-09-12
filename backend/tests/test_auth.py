@@ -165,7 +165,13 @@ def test_backend_jwt_grants_access_to_protected_chat_endpoint() -> None:
 def test_tampered_backend_jwt_is_rejected() -> None:
     settings = get_settings()
     token, _ = mint_token(settings=settings, user_id="u1", tenant_id="t1", roles=["operator"])
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    # Flip a character in the middle rather than the last one: base64url's
+    # final character can sit on a padding-bit boundary where a different
+    # character still decodes to the same bytes, occasionally making an
+    # end-of-token tamper a silent no-op.
+    mid = len(token) // 2
+    flipped_char = "A" if token[mid] != "A" else "B"
+    tampered = token[:mid] + flipped_char + token[mid + 1 :]
 
     response = client.post("/v1/conversations", headers={"Authorization": f"Bearer {tampered}"})
 

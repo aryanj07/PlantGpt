@@ -5,6 +5,7 @@ this module's external shape.
 """
 
 import json
+import logging
 from collections.abc import AsyncIterator
 
 from fastapi import HTTPException
@@ -13,6 +14,9 @@ from app.modules.chat.schemas import MessageOut
 from app.modules.chat.store import Conversation, Message, store
 from app.modules.cost.tracker import BudgetExceededError, CostTracker, get_cost_tracker
 from app.modules.llm_gateway.gateway import HISTORY_LIMIT, LLMGateway, get_llm_gateway
+from app.modules.router.classifier import classify
+
+logger = logging.getLogger("plantgpt")
 
 
 def create_conversation(*, tenant_id: str, user_id: str) -> Conversation:
@@ -51,6 +55,14 @@ async def post_user_message(
     user_message = store.add_message(
         conversation_id=conversation_id, tenant_id=tenant_id, role="user", content=content
     )
+
+    # RequestRouter v1 (plan Section H.3). TODO(Phase 3/4): once
+    # RAGService.retrieve() and MCPToolBroker.dispatch() are real (not
+    # NotImplementedError stubs), branch on `route` here instead of only
+    # logging it - NEEDS_RAG/NEEDS_TOOL/NEEDS_RAG_AND_TOOL should compose
+    # retrieval and/or bounded tool calls before the Gateway call below.
+    route = classify(content)
+    logger.info("route_classified route=%s conversation_id=%s", route.value, conversation_id)
 
     tracker = cost_tracker or get_cost_tracker()
     try:
@@ -121,6 +133,10 @@ async def stream_assistant_reply(
         conversation_id=conversation_id, tenant_id=tenant_id, role="user", content=content
     )
     yield _sse({"type": "user_message", "message": _message_payload(user_message)})
+
+    # See the matching TODO in post_user_message - same log-only wiring.
+    route = classify(content)
+    logger.info("route_classified route=%s conversation_id=%s", route.value, conversation_id)
 
     tracker = cost_tracker or get_cost_tracker()
     try:

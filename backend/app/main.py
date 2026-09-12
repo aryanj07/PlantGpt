@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,6 +11,13 @@ from app.observability import RequestContextMiddleware
 
 
 def create_app() -> FastAPI:
+    # Minimal - real structured logging (request_id/trace_id-tagged, shipped
+    # somewhere queryable) is a Phase 5 task (plan Section K). Without even
+    # this, every logger.info() call in the app (e.g. RequestRouter's
+    # route_classified line) is silently dropped by Python's default
+    # logging config - this just makes them visible during dev.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
     app = FastAPI(title="PlantGPT Backend", version="0.0.1-phase0")
 
     settings = get_settings()
