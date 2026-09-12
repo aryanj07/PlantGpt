@@ -16,7 +16,8 @@ class LocalChatRepository implements ChatRepository {
               conversationId: conversationId,
               role: ChatRole.assistant,
               content:
-                  'Hi. Ask me anything, and this app will keep the database layer separate from the chat UI.',
+                  'Hi. I am PlantGPT — ask me about cement, steel, or manufacturing plant '
+                  'operations. This mock keeps the database layer separate from the chat UI.',
               createdAt: DateTime.now(),
             ),
           ],

@@ -185,14 +185,12 @@ class _ChatPageState extends State<ChatPage> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          Image.asset(
-            'assets/images/plant_background.png',
-            fit: BoxFit.cover,
-          ),
           DecoratedBox(
             decoration: BoxDecoration(
-              color: colors.surface.withOpacity(
-                Theme.of(context).brightness == Brightness.dark ? 0.72 : 0.58,
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [colors.surfaceContainerHighest, colors.surface],
               ),
             ),
           ),
@@ -381,7 +379,7 @@ class _Composer extends StatelessWidget {
                     maxLines: 5,
                     textInputAction: TextInputAction.newline,
                     decoration: const InputDecoration(
-                      hintText: 'Enter the context here',
+                      hintText: 'Ask about plant operations…',
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 12,

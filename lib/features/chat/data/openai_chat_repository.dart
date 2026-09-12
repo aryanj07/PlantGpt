@@ -19,8 +19,11 @@ class OpenAiChatRepository implements ChatRepository {
   final Map<String, List<ChatMessage>> _messagesByConversation = {};
 
   static const _systemPrompt =
-      'You are PlantGPT, a helpful, conversational assistant. Answer clearly, '
-      'ask concise follow-up questions when needed, and keep context from the '
+      'You are PlantGPT, a domain expert assistant for industrial plant '
+      'operations — cement plants, steel plants, and manufacturing plants. '
+      'Help with process parameters, equipment troubleshooting, production-line '
+      'optimization, maintenance, and safety questions. Answer clearly, ask '
+      'concise follow-up questions when needed, and keep context from the '
       'current chat.';
 
   @override
@@ -33,7 +36,8 @@ class OpenAiChatRepository implements ChatRepository {
               conversationId: conversationId,
               role: ChatRole.assistant,
               content:
-                  'Hi. I am connected to OpenAI when you run the app with an API key. Ask me anything.',
+                  'Hi. I am PlantGPT, connected to OpenAI. Ask me about cement, steel, or '
+                  'manufacturing plant operations.',
               createdAt: DateTime.now(),
             ),
           ],

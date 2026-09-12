@@ -1,5 +1,5 @@
 name: chatgpt_alt_db
-description: A ChatGPT-style Flutter app with a swappable database linkage layer.
+description: A ChatGPT-style Flutter assistant for cement, steel, and manufacturing plant operations, with a swappable database linkage layer.
 publish_to: "none"
 version: 0.1.0+1
 
@@ -19,5 +19,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/images/plant_background.png

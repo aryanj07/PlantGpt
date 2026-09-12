@@ -1,15 +1,19 @@
 # PlantGPT Flutter Starter
 
-A ChatGPT-style Flutter app with the database linkage isolated behind a repository contract.
+A ChatGPT-style Flutter assistant for **industrial plant operations** — cement plants, steel
+plants, and manufacturing plants — with the database linkage isolated behind a repository
+contract. ("Plant" here means an industrial facility, not a houseplant.)
 
 ## What is included
 
-- Chat screen with assistant/user bubbles
-- Message composer with loading state and optional image attachment (via `image_picker`)
+- Chat screen with assistant/user bubbles, system-prompted for cement/steel/manufacturing
+  plant-operations questions (process parameters, equipment troubleshooting, production-line
+  optimization, maintenance, safety)
+- Message composer with loading state and optional image attachment (via `image_picker`) — handy
+  for sharing a photo of equipment or a gauge reading
 - OpenAI Responses API repository that can behave like ChatGPT when an API key is supplied
 - FreeRouter repository for routing chat requests through a self-hosted free-model router
 - OpenRouter repository for routing chat requests through OpenRouter.ai's hosted free-model router
-- Plant background image asset for the chat screen
 - Material 3 light/dark theme
 - `ChatRepository` interface for storage and assistant responses
 - `LocalChatRepository` mock implementation for development

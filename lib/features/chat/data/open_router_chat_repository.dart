@@ -83,8 +83,11 @@ class OpenRouterChatRepository implements ChatRepository {
   final Random _random = Random();
 
   static const _systemPrompt =
-      'You are PlantGPT, a helpful, conversational assistant. Answer clearly, '
-      'ask concise follow-up questions when needed, and keep context from the '
+      'You are PlantGPT, a domain expert assistant for industrial plant '
+      'operations — cement plants, steel plants, and manufacturing plants. '
+      'Help with process parameters, equipment troubleshooting, production-line '
+      'optimization, maintenance, and safety questions. Answer clearly, ask '
+      'concise follow-up questions when needed, and keep context from the '
       'current chat.';
 
   static const _historyLimit = 16;
@@ -99,7 +102,8 @@ class OpenRouterChatRepository implements ChatRepository {
               conversationId: conversationId,
               role: ChatRole.assistant,
               content:
-                  'Hi. I am routed through OpenRouter.ai to a free model. Ask me anything.',
+                  'Hi. I am PlantGPT, routed through OpenRouter.ai to a free model. Ask me '
+                  'about cement, steel, or manufacturing plant operations.',
               createdAt: DateTime.now(),
             ),
           ],

@@ -4,10 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-PlantGPT (package name `chatgpt_alt_db`) is a Flutter chat app modeled on ChatGPT's UI, built so the
-database/AI backend can be swapped without touching the UI. All chat screens depend only on the
-`ChatRepository` abstract interface (`lib/features/chat/domain/chat_repository.dart`), never on a
-concrete data source directly.
+PlantGPT (package name `chatgpt_alt_db`) is a Flutter chat app modeled on ChatGPT's UI, purpose-built
+as a domain assistant for **industrial plant operations** — cement plants, steel plants, and
+manufacturing plants ("plant" as in facility, not botany). The `_systemPrompt` shared across the AI
+repositories steers responses toward process parameters, equipment troubleshooting, production-line
+optimization, maintenance, and safety. The app is built so the database/AI backend can be swapped
+without touching the UI. All chat screens depend only on the `ChatRepository` abstract interface
+(`lib/features/chat/domain/chat_repository.dart`), never on a concrete data source directly.
 
 ## Commands
 
