@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     openrouter_site_url: str = ""
     openrouter_site_name: str = ""
 
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-flash"
+
     anthropic_api_key: str = ""
 
     # Flat per-tenant budget (plan Section G.1 quota_ledger, Q). One value

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from app.config import Settings, get_settings
 from app.modules.llm_gateway.adapters.base import ProviderAdapter
+from app.modules.llm_gateway.adapters.deepseek_adapter import DeepSeekAdapter
 from app.modules.llm_gateway.adapters.openai_adapter import OpenAiAdapter
 from app.modules.llm_gateway.adapters.openrouter_adapter import OpenRouterAdapter
 from app.modules.llm_gateway.reliability import (
@@ -207,6 +208,15 @@ def build_llm_gateway(settings: Settings | None = None) -> LLMGateway:
                 name="openai",
                 adapter=OpenAiAdapter(api_key=settings.openai_api_key, model=settings.openai_model),
                 model=settings.openai_model,
+            )
+        )
+
+    if settings.deepseek_api_key:
+        routes.append(
+            _Route(
+                name="deepseek",
+                adapter=DeepSeekAdapter(api_key=settings.deepseek_api_key, model=settings.deepseek_model),
+                model=settings.deepseek_model,
             )
         )
 
