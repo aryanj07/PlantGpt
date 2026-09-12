@@ -10,3 +10,7 @@ ios/Pods/
 ios/.symlinks/
 macos/Pods/
 freerouter/
+
+# Local Claude Code / MCP tooling config - machine-local, not app code.
+.claude/
+.mcp.json

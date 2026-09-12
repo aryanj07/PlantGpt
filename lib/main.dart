@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'core/app_theme.dart';
+import 'features/chat/data/api_chat_repository.dart';
 import 'features/chat/data/free_router_chat_repository.dart';
 import 'features/chat/data/local_chat_repository.dart';
 import 'features/chat/data/open_router_chat_repository.dart';
@@ -14,6 +15,26 @@ void main() {
 
 class ChatApp extends StatelessWidget {
   const ChatApp({super.key});
+
+  // The real PlantGPT backend (plan Section C.3) - when set, this takes
+  // priority over every direct-to-provider repository below, since it's
+  // the actual target architecture rather than a dev/legacy fallback.
+  static const _apiBaseUrl = String.fromEnvironment('API_BASE_URL');
+  // TODO: replace with real Auth0 login in the client (a separate task) -
+  // these dev headers are a stand-in until then, mirroring the backend's
+  // own documented dev-mode fallback (app/modules/auth/service.py). Delete
+  // this path, don't just stop passing it, once real login lands.
+  static const _apiDevTenantId = String.fromEnvironment(
+    'API_DEV_TENANT_ID',
+    defaultValue: 'default',
+  );
+  static const _apiDevUserId = String.fromEnvironment(
+    'API_DEV_USER_ID',
+    defaultValue: 'dev-user',
+  );
+  // Optional: a real backend session token (from POST /v1/auth/session),
+  // if you have one already, in place of the dev headers above.
+  static const _apiSessionToken = String.fromEnvironment('API_SESSION_TOKEN');
 
   static const _openAiApiKey = String.fromEnvironment('OPENAI_API_KEY');
   static const _openAiModel = String.fromEnvironment(
@@ -66,27 +87,20 @@ class ChatApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ChatRepository repository = _freeRouterEnabled
-        ? FreeRouterChatRepository(
-            baseUrl: _freeRouterBaseUrl,
-            model: _freeRouterModel,
-            timeout: const Duration(milliseconds: _freeRouterTimeoutMs),
-            maxRetries: _freeRouterMaxRetries,
-            apiKey: _freeRouterApiKey.isEmpty ? null : _freeRouterApiKey,
-            fallback: (_llmFallbackEnabled && _openAiApiKey.isNotEmpty)
-                ? OpenAiChatRepository(
-                    apiKey: _openAiApiKey,
-                    model: _openAiModel,
-                  )
-                : null,
+    final ChatRepository repository = _apiBaseUrl.isNotEmpty
+        ? ApiChatRepository(
+            baseUrl: _apiBaseUrl,
+            sessionToken: _apiSessionToken.isEmpty ? null : _apiSessionToken,
+            devTenantId: _apiSessionToken.isEmpty ? _apiDevTenantId : null,
+            devUserId: _apiSessionToken.isEmpty ? _apiDevUserId : null,
           )
-        : _openRouterApiKey.isNotEmpty
-            ? OpenRouterChatRepository(
-                apiKey: _openRouterApiKey,
-                model: _openRouterModel,
-                siteUrl: _openRouterSiteUrl.isEmpty ? null : _openRouterSiteUrl,
-                siteName:
-                    _openRouterSiteName.isEmpty ? null : _openRouterSiteName,
+        : _freeRouterEnabled
+            ? FreeRouterChatRepository(
+                baseUrl: _freeRouterBaseUrl,
+                model: _freeRouterModel,
+                timeout: const Duration(milliseconds: _freeRouterTimeoutMs),
+                maxRetries: _freeRouterMaxRetries,
+                apiKey: _freeRouterApiKey.isEmpty ? null : _freeRouterApiKey,
                 fallback: (_llmFallbackEnabled && _openAiApiKey.isNotEmpty)
                     ? OpenAiChatRepository(
                         apiKey: _openAiApiKey,
@@ -94,12 +108,28 @@ class ChatApp extends StatelessWidget {
                       )
                     : null,
               )
-            : _openAiApiKey.isEmpty
-                ? LocalChatRepository()
-                : OpenAiChatRepository(
-                    apiKey: _openAiApiKey,
-                    model: _openAiModel,
-                  );
+            : _openRouterApiKey.isNotEmpty
+                ? OpenRouterChatRepository(
+                    apiKey: _openRouterApiKey,
+                    model: _openRouterModel,
+                    siteUrl:
+                        _openRouterSiteUrl.isEmpty ? null : _openRouterSiteUrl,
+                    siteName: _openRouterSiteName.isEmpty
+                        ? null
+                        : _openRouterSiteName,
+                    fallback: (_llmFallbackEnabled && _openAiApiKey.isNotEmpty)
+                        ? OpenAiChatRepository(
+                            apiKey: _openAiApiKey,
+                            model: _openAiModel,
+                          )
+                        : null,
+                  )
+                : _openAiApiKey.isEmpty
+                    ? LocalChatRepository()
+                    : OpenAiChatRepository(
+                        apiKey: _openAiApiKey,
+                        model: _openAiModel,
+                      );
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
