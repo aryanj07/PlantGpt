@@ -24,9 +24,9 @@ HEADERS = {"X-Dev-Tenant-Id": "budget-tenant", "X-Dev-User-Id": "u1"}
 
 @pytest.fixture(autouse=True)
 def _clear_ledger():
-    ledger._usage.clear()
+    ledger.clear_all()
     yield
-    ledger._usage.clear()
+    ledger.clear_all()
 
 
 def _tracker(budget_usd: float = 1.0) -> CostTracker:
@@ -119,9 +119,8 @@ def test_streaming_endpoint_reports_budget_exceeded_as_sse_error() -> None:
     conv = client.post("/v1/conversations", headers=HEADERS).json()
 
     # Pre-exhaust the budget for this tenant directly in the shared ledger
-    # (same object the endpoint's default get_cost_tracker() reads from).
-    usage = ledger.get_or_create("budget-tenant")
-    usage.cost_usd = 999.0
+    # (same row the endpoint's default get_cost_tracker() reads from).
+    ledger.set_usage(tenant_id="budget-tenant", tokens_used=0, cost_usd=999.0)
 
     response = client.post(
         f"/v1/conversations/{conv['id']}/messages/stream",
@@ -142,9 +141,7 @@ def test_streaming_endpoint_reports_budget_exceeded_as_sse_error() -> None:
 
 
 def test_usage_endpoint_reports_current_snapshot() -> None:
-    usage = ledger.get_or_create("budget-tenant")
-    usage.tokens_used = 42
-    usage.cost_usd = 0.005
+    ledger.set_usage(tenant_id="budget-tenant", tokens_used=42, cost_usd=0.005)
 
     response = client.get("/v1/cost/usage", headers=HEADERS)
 

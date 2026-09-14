@@ -74,9 +74,9 @@ def _mock_verifier(*, domain: str = TEST_DOMAIN, audience: str = TEST_AUDIENCE) 
 
 @pytest.fixture(autouse=True)
 def _clear_user_directory():
-    user_directory._by_auth0_sub.clear()
+    user_directory.clear_all()
     yield
-    user_directory._by_auth0_sub.clear()
+    user_directory.clear_all()
 
 
 @pytest.mark.anyio

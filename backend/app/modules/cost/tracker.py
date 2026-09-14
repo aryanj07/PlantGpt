@@ -71,10 +71,11 @@ class CostTracker:
             model, DEFAULT_PRICING_USD_PER_1M_TOKENS
         )
         cost_usd = (prompt_tokens * prompt_rate + completion_tokens * completion_rate) / 1_000_000
-
-        usage = ledger.get_or_create(tenant_id)
-        usage.tokens_used += prompt_tokens + completion_tokens
-        usage.cost_usd += cost_usd
+        # A real read-modify-write against the row, not a mutation of
+        # whatever get_or_create() returned - see store.py's docstring for
+        # why (real rows, not a shared in-memory object, can't be mutated
+        # in place like that anymore).
+        ledger.record(tenant_id=tenant_id, tokens=prompt_tokens + completion_tokens, cost_usd=cost_usd)
 
     def snapshot(self, *, tenant_id: str) -> UsageSnapshot:
         usage = ledger.get_or_create(tenant_id)

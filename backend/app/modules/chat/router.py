@@ -14,16 +14,24 @@ from app.modules.chat.schemas import ConversationOut, CreateMessageRequest, Mess
 router = APIRouter()
 
 
+def _row_dict(obj) -> dict:
+    """obj.__dict__ on a real SQLAlchemy instance (Phase 5) also carries
+    _sa_instance_state, which Out schemas would just silently ignore
+    (pydantic's default extra='ignore') - using __table__.columns instead
+    is the same safe pattern already used in rag/router.py."""
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+
 @router.post("/conversations", response_model=ConversationOut)
 def create_conversation(identity: CurrentIdentity = Depends(get_current_identity)) -> ConversationOut:
     conv = service.create_conversation(tenant_id=identity.tenant_id, user_id=identity.user_id)
-    return ConversationOut(**conv.__dict__)
+    return ConversationOut(**_row_dict(conv))
 
 
 @router.get("/conversations", response_model=list[ConversationOut])
 def list_conversations(identity: CurrentIdentity = Depends(get_current_identity)) -> list[ConversationOut]:
     convs = service.list_conversations(tenant_id=identity.tenant_id, user_id=identity.user_id)
-    return [ConversationOut(**c.__dict__) for c in convs]
+    return [ConversationOut(**_row_dict(c)) for c in convs]
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
@@ -31,7 +39,7 @@ def list_messages(
     conversation_id: str, identity: CurrentIdentity = Depends(get_current_identity)
 ) -> list[MessageOut]:
     msgs = service.list_messages(tenant_id=identity.tenant_id, conversation_id=conversation_id)
-    return [MessageOut(**m.__dict__) for m in msgs]
+    return [MessageOut(**_row_dict(m)) for m in msgs]
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
@@ -43,7 +51,7 @@ async def post_message(
     user_msg, assistant_msg = await service.post_user_message(
         tenant_id=identity.tenant_id, conversation_id=conversation_id, content=body.content
     )
-    return [MessageOut(**user_msg.__dict__), MessageOut(**assistant_msg.__dict__)]
+    return [MessageOut(**_row_dict(user_msg)), MessageOut(**_row_dict(assistant_msg))]
 
 
 @router.post("/conversations/{conversation_id}/messages/stream")

@@ -80,8 +80,8 @@ project (Android + Web scaffolding present, iOS/others not set up).
   (pgvector cosine search filtered by `tenant_id`). Wired into `chat/service.py` for both the streaming and
   non-streaming paths; citations flow through to `Message.citations`/`MessageOut` and the Flutter
   `_MessageBubble`'s "Source: ..." line. Client-side upload UI: `lib/features/documents/`, a "Documents"
-  icon in the chat AppBar. Chat/auth/cost still stay on their existing in-memory stores — migrating them to
-  Postgres is an explicitly separate, deferred task, not part of RAG.
+  icon in the chat AppBar. Chat/auth/cost's migration off their in-memory stores was deferred out of this
+  phase at the time - see the Phase 5 bullet below, it's done now.
 - **MCP tool broker (backend, done)**: `backend/app/modules/mcp/` — `broker.py`'s `MCPToolBroker.run()`
   dispatches heuristically (not LLM function-calling, a deliberate scope choice - see the module
   docstring) based on `router/classifier.py`'s `classify_tool_kind()`: a self-hosted, zero-dependency
@@ -91,6 +91,13 @@ project (Android + Web scaffolding present, iOS/others not set up).
   `{"document_id", "title", "source_uri"}` citation shape RAG uses, so the Flutter "Source: ..." UI shows
   tool results too with no client changes. `dispatch(tool_name, arguments)` is an unused stub kept only
   for a possible future real function-calling migration. v1 ships zero WRITE tools.
+- **Phase 5 (deploy, in progress)**: chat/auth/cost migrated off their in-memory stores onto the same
+  Supabase Postgres instance RAG uses (`chat/models.py`, `auth/models.py`, `cost/models.py`, Alembic
+  migration `0003`) — a backend restart no longer wipes conversations, provisioned identities, or budget
+  ledgers (verified: kill + restart the process, history is still there). `cost/store.py` also now resets
+  a tenant's usage at the start of each calendar month — the in-memory version never reset, so hitting
+  budget once meant permanent lockout for the life of the process. `backend/render.yaml` is the Render
+  Blueprint for actually hosting this somewhere persistent — written, not yet deployed.
 - **Theming**: `lib/core/app_theme.dart` provides Material 3 light/dark `ThemeData` via `ColorScheme.fromSeed`;
   `main.dart` wires both into `MaterialApp` with `themeMode: ThemeMode.system`.
 - **Testing pattern**: `ApiChatRepository`, and the legacy `OpenAiChatRepository`/`OpenRouterChatRepository`/

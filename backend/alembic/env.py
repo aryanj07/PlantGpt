@@ -10,6 +10,9 @@ from alembic import context
 # sqlalchemy.url - one source of truth for the connection string.
 from app.config import get_settings
 from app.db import Base
+from app.modules.auth import models as auth_models  # noqa: F401 - registers User on Base.metadata
+from app.modules.chat import models as chat_models  # noqa: F401 - registers Conversation/Message
+from app.modules.cost import models as cost_models  # noqa: F401 - registers TenantUsage
 from app.modules.rag import models  # noqa: F401 - registers Document/DocumentChunk on Base.metadata
 
 # this is the Alembic Config object, which provides

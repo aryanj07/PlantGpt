@@ -173,7 +173,11 @@ def _sse(payload: dict) -> str:
 
 
 def _message_payload(message: Message) -> dict:
-    return MessageOut(**message.__dict__).model_dump(mode="json")
+    # message.__dict__ on a real SQLAlchemy instance (Phase 5) also carries
+    # _sa_instance_state - __table__.columns is the same safe pattern
+    # chat/router.py's _row_dict and rag/router.py already use.
+    row = {c.name: getattr(message, c.name) for c in message.__table__.columns}
+    return MessageOut(**row).model_dump(mode="json")
 
 
 async def stream_assistant_reply(

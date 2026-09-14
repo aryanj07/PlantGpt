@@ -1,71 +1,53 @@
-"""Phase 0 placeholder persistence: a process-local in-memory store. Real
-Postgres persistence (tenants/users/conversations/messages schema + RLS) is a
-Phase 1 task owned by Rimsha (plan Section G.1, O). Nothing here survives a
-process restart and there is no cross-instance consistency - do not build on
-top of this beyond the Phase 0 skeleton.
+"""Chat/Conversation Module persistence (plan Section D, E). Phase 5: real
+Postgres via SQLAlchemy, replacing the Phase 0 in-memory placeholder - same
+public method shapes as before, so chat/service.py needed no changes. A
+plain sync SQLAlchemy Session per call, same pattern already established by
+rag/service.py and rag/ingestion.py (this backend's Postgres access is sync
+throughout, not the separate async SQLAlchemy engine/session flavor).
 """
 
-import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 
-@dataclass
-class Conversation:
-    id: str
-    tenant_id: str
-    user_id: str
-    title: str | None
-    created_at: datetime
-    updated_at: datetime
+from app.db import SessionLocal
+from app.modules.chat.models import Conversation, Message
 
 
-@dataclass
-class Message:
-    id: str
-    conversation_id: str
-    tenant_id: str
-    role: str
-    content: str
-    created_at: datetime
-    is_pending: bool = False
-    citations: list[dict] | None = None
-
-
-class InMemoryChatStore:
-    def __init__(self) -> None:
-        self._conversations: dict[str, Conversation] = {}
-        self._messages: dict[str, list[Message]] = {}
-
+class SqlChatStore:
     def create_conversation(self, *, tenant_id: str, user_id: str, title: str | None = None) -> Conversation:
-        now = datetime.now(UTC)
-        conv = Conversation(
-            id=str(uuid.uuid4()),
-            tenant_id=tenant_id,
-            user_id=user_id,
-            title=title,
-            created_at=now,
-            updated_at=now,
-        )
-        self._conversations[conv.id] = conv
-        self._messages[conv.id] = []
-        return conv
+        db = SessionLocal()
+        try:
+            conv = Conversation(tenant_id=tenant_id, user_id=user_id, title=title)
+            db.add(conv)
+            db.commit()
+            db.refresh(conv)
+            return conv
+        finally:
+            db.close()
 
     def get_conversation(self, *, conversation_id: str, tenant_id: str) -> Conversation | None:
-        conv = self._conversations.get(conversation_id)
-        if conv is None or conv.tenant_id != tenant_id:
-            # Tenant check mirrors the ownership check the real Chat Module
-            # must do server-side (plan Section E step 6) - even in this
-            # in-memory stand-in, never skip it.
-            return None
-        return conv
+        db = SessionLocal()
+        try:
+            conv = db.get(Conversation, conversation_id)
+            if conv is None or conv.tenant_id != tenant_id:
+                # Tenant check mirrors the ownership check the Chat Module
+                # must do server-side (plan Section E step 6) - never trust
+                # a bare ID lookup without it.
+                return None
+            return conv
+        finally:
+            db.close()
 
     def list_conversations(self, *, tenant_id: str, user_id: str) -> list[Conversation]:
-        return [
-            c
-            for c in self._conversations.values()
-            if c.tenant_id == tenant_id and c.user_id == user_id
-        ]
+        db = SessionLocal()
+        try:
+            stmt = select(Conversation).where(
+                Conversation.tenant_id == tenant_id, Conversation.user_id == user_id
+            )
+            return list(db.scalars(stmt).all())
+        finally:
+            db.close()
 
     def add_message(
         self,
@@ -76,23 +58,38 @@ class InMemoryChatStore:
         content: str,
         citations: list[dict] | None = None,
     ) -> Message:
-        msg = Message(
-            id=str(uuid.uuid4()),
-            conversation_id=conversation_id,
-            tenant_id=tenant_id,
-            role=role,
-            content=content,
-            created_at=datetime.now(UTC),
-            citations=citations,
-        )
-        self._messages.setdefault(conversation_id, []).append(msg)
-        self._conversations[conversation_id].updated_at = msg.created_at
-        return msg
+        db = SessionLocal()
+        try:
+            msg = Message(
+                conversation_id=conversation_id,
+                tenant_id=tenant_id,
+                role=role,
+                content=content,
+                citations=citations,
+            )
+            db.add(msg)
+            conv = db.get(Conversation, conversation_id)
+            if conv is not None:
+                conv.updated_at = datetime.now(UTC)
+            db.commit()
+            db.refresh(msg)
+            return msg
+        finally:
+            db.close()
 
     def list_messages(self, *, conversation_id: str, tenant_id: str) -> list[Message]:
         if self.get_conversation(conversation_id=conversation_id, tenant_id=tenant_id) is None:
             return []
-        return list(self._messages.get(conversation_id, []))
+        db = SessionLocal()
+        try:
+            stmt = (
+                select(Message)
+                .where(Message.conversation_id == conversation_id, Message.tenant_id == tenant_id)
+                .order_by(Message.created_at)
+            )
+            return list(db.scalars(stmt).all())
+        finally:
+            db.close()
 
 
-store = InMemoryChatStore()
+store = SqlChatStore()

@@ -1,0 +1,41 @@
+# Render Blueprint (Phase 5 plan) - deploys straight from requirements.txt,
+# no Dockerfile needed. Secrets below are declared with sync: false so
+# Render prompts for them once in its dashboard and never stores/reads
+# them from this committed file - same "env var only, never committed"
+# pattern as every other secret in this project (.env, never git).
+#
+# Deploy: connect this repo in the Render dashboard, "New +" -> "Blueprint",
+# point it at this file. First deploy will prompt for every sync: false var.
+services:
+  - type: web
+    name: plantgpt-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DEV_MODE
+        value: "false"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_ISSUER
+        value: plantgpt-backend
+      - key: JWT_TTL_MINUTES
+        value: "30"
+      - key: AUTH0_DOMAIN
+        sync: false
+      - key: AUTH0_AUDIENCE
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: DEFAULT_MONTHLY_BUDGET_USD
+        value: "1.0"

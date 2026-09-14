@@ -1,18 +1,20 @@
-"""Placeholder user directory (plan Section J.2, G.1 `users` table).
+"""User directory for the Auth Module (plan Section J.2, G.1 `users`
+table). Phase 5: real Postgres via SQLAlchemy, replacing the Phase 0
+in-memory placeholder - resolve_or_provision()'s shape is unchanged, so
+auth/service.py needed no changes.
 
-Maps an Auth0 subject to a PlantGPT tenant_id/user_id/roles, auto-
-provisioning a single default tenant on first sight - correct for a solo
-builder with exactly one tenant right now. Real multi-tenant assignment (or
-reading tenant/role from an Auth0 custom claim, the plan's stated
-alternative) replaces this once the Postgres `users` table (Phase 1 schema
-task, still blocked on Postgres being stood up) exists.
-
-Process-local and non-persistent - same caveat as chat/store.py. Restarting
-the backend forgets every provisioned identity.
+Real multi-tenant assignment (or reading tenant/role from an Auth0 custom
+claim, the plan's stated alternative) still replaces DEFAULT_TENANT_ID/
+DEFAULT_ROLES later - correct for a solo builder with exactly one tenant
+right now, unaffected by moving off the in-memory dict.
 """
 
-import uuid
 from dataclasses import dataclass
+
+from sqlalchemy import select
+
+from app.db import SessionLocal
+from app.modules.auth.models import User
 
 DEFAULT_TENANT_ID = "default"
 DEFAULT_ROLES = ["admin"]
@@ -26,18 +28,31 @@ class ProvisionedUser:
 
 
 class UserDirectory:
-    def __init__(self) -> None:
-        self._by_auth0_sub: dict[str, ProvisionedUser] = {}
-
     def resolve_or_provision(self, auth0_sub: str) -> ProvisionedUser:
-        existing = self._by_auth0_sub.get(auth0_sub)
-        if existing is not None:
-            return existing
-        provisioned = ProvisionedUser(
-            user_id=str(uuid.uuid4()), tenant_id=DEFAULT_TENANT_ID, roles=list(DEFAULT_ROLES)
-        )
-        self._by_auth0_sub[auth0_sub] = provisioned
-        return provisioned
+        db = SessionLocal()
+        try:
+            existing = db.scalar(select(User).where(User.auth0_sub == auth0_sub))
+            if existing is not None:
+                return ProvisionedUser(
+                    user_id=existing.id, tenant_id=existing.tenant_id, roles=list(existing.roles)
+                )
+
+            user = User(auth0_sub=auth0_sub, tenant_id=DEFAULT_TENANT_ID, roles=list(DEFAULT_ROLES))
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            return ProvisionedUser(user_id=user.id, tenant_id=user.tenant_id, roles=list(user.roles))
+        finally:
+            db.close()
+
+    def clear_all(self) -> None:
+        """Test-only: wipes every provisioned user. Real code never calls this."""
+        db = SessionLocal()
+        try:
+            db.query(User).delete()
+            db.commit()
+        finally:
+            db.close()
 
 
 directory = UserDirectory()
