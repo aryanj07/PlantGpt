@@ -33,6 +33,17 @@ abstract class ChatRepository {
       conversationId: conversationId,
       userMessage: userMessage,
     );
+    lastCitations = reply.citations;
     yield reply.content;
   }
+
+  /// Citations (Phase 3 RAG) backing whichever [streamAssistantReply] call
+  /// most recently completed, or null if that reply used none - the plain
+  /// `Stream<String>` return type above has no room to carry structured
+  /// data per-event, and citations only ever arrive once (attached to the
+  /// whole reply), so a side-channel read after the stream finishes is
+  /// simpler than changing the stream's element type for every
+  /// implementation. `ApiChatRepository` overrides `streamAssistantReply`
+  /// and sets this itself instead of going through this default.
+  List<ChatCitation>? lastCitations;
 }

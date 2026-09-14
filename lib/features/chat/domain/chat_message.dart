@@ -2,6 +2,21 @@ import 'dart:typed_data';
 
 enum ChatRole { user, assistant }
 
+/// A RAG source document backing an assistant reply (Phase 3). Only ever
+/// populated on assistant messages, and only when the backend's RAGService
+/// actually retrieved and used a document to answer.
+class ChatCitation {
+  const ChatCitation({
+    required this.documentId,
+    required this.title,
+    this.sourceUri,
+  });
+
+  final String documentId;
+  final String title;
+  final String? sourceUri;
+}
+
 class ChatMessage {
   const ChatMessage({
     required this.id,
@@ -12,6 +27,7 @@ class ChatMessage {
     this.isPending = false,
     this.imageBytes,
     this.imageMimeType,
+    this.citations,
   });
 
   final String id;
@@ -26,6 +42,8 @@ class ChatMessage {
   final Uint8List? imageBytes;
   final String? imageMimeType;
 
+  final List<ChatCitation>? citations;
+
   ChatMessage copyWith({
     String? id,
     String? conversationId,
@@ -35,6 +53,7 @@ class ChatMessage {
     bool? isPending,
     Uint8List? imageBytes,
     String? imageMimeType,
+    List<ChatCitation>? citations,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -45,6 +64,7 @@ class ChatMessage {
       isPending: isPending ?? this.isPending,
       imageBytes: imageBytes ?? this.imageBytes,
       imageMimeType: imageMimeType ?? this.imageMimeType,
+      citations: citations ?? this.citations,
     );
   }
 }

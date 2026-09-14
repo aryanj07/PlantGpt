@@ -19,6 +19,7 @@ class MessageOut(BaseModel):
     content: str
     created_at: datetime
     is_pending: bool = False
+    citations: list[dict] | None = None
 
 
 class CreateMessageRequest(BaseModel):

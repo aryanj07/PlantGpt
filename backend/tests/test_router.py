@@ -7,7 +7,7 @@ covering all four routes.
 
 import pytest
 
-from app.modules.router.classifier import Route, classify
+from app.modules.router.classifier import Route, ToolKind, classify, classify_tool_kind
 
 GOLDEN_CASES: list[tuple[str, Route]] = [
     # SIMPLE_CHAT - general domain knowledge, nothing live or plant-specific
@@ -87,3 +87,22 @@ def test_golden_set_accuracy_meets_dod_threshold() -> None:
 def test_classify_is_deterministic() -> None:
     query = "According to our SOP, what should I do if kiln 2's current temperature is too high?"
     assert classify(query) == classify(query) == Route.NEEDS_RAG_AND_TOOL
+
+
+TOOL_KIND_CASES: list[tuple[str, ToolKind]] = [
+    ("What is the current temperature of kiln 2?", ToolKind.SENSOR),
+    ("What's the status of work order 4521?", ToolKind.SENSOR),
+    ("Search the web for the latest cement industry emissions regulations.", ToolKind.WEB_SEARCH),
+    ("Can you look up online what causes clinker nodulization?", ToolKind.WEB_SEARCH),
+    ("Summarize https://example.com/plant-safety-bulletin for me.", ToolKind.WEB_EXTRACT),
+]
+
+
+@pytest.mark.parametrize("query,expected_kind", TOOL_KIND_CASES, ids=[c[0][:40] for c in TOOL_KIND_CASES])
+def test_classify_tool_kind_matches_expected(query: str, expected_kind: ToolKind) -> None:
+    assert classify_tool_kind(query) == expected_kind
+
+
+def test_classify_tool_kind_prefers_url_over_web_search_phrase() -> None:
+    query = "Search the web using https://example.com/report as a starting point."
+    assert classify_tool_kind(query) == ToolKind.WEB_EXTRACT

@@ -219,6 +219,7 @@ class ApiChatRepository extends ChatRepository {
     final lines =
         response.stream.transform(utf8.decoder).transform(const LineSplitter());
 
+    lastCitations = null;
     await for (final line in lines) {
       if (!line.startsWith('data:')) continue;
       final payload = line.substring(5).trim();
@@ -226,6 +227,20 @@ class ApiChatRepository extends ChatRepository {
 
       final event = jsonDecode(payload) as Map<String, dynamic>;
       switch (event['type']) {
+        case 'citations':
+          // Arrives before any 'delta' (see chat/service.py's
+          // stream_assistant_reply), so it's already set by the time the
+          // caller sees the first text chunk.
+          lastCitations = (event['citations'] as List<dynamic>?)
+              ?.map((raw) {
+                final c = raw as Map<String, dynamic>;
+                return ChatCitation(
+                  documentId: c['document_id'] as String? ?? '',
+                  title: c['title'] as String? ?? 'Untitled source',
+                  sourceUri: c['source_uri'] as String?,
+                );
+              })
+              .toList();
         case 'delta':
           final content = event['content'] as String?;
           if (content != null && content.isNotEmpty) yield content;
@@ -346,6 +361,16 @@ class ApiChatRepository extends ChatRepository {
       createdAt: DateTime.tryParse(json['created_at'] as String? ?? '') ??
           DateTime.now(),
       isPending: json['is_pending'] as bool? ?? false,
+      citations: (json['citations'] as List<dynamic>?)
+          ?.map((raw) {
+            final c = raw as Map<String, dynamic>;
+            return ChatCitation(
+              documentId: c['document_id'] as String? ?? '',
+              title: c['title'] as String? ?? 'Untitled source',
+              sourceUri: c['source_uri'] as String?,
+            );
+          })
+          .toList(),
     );
   }
 

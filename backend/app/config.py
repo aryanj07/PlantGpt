@@ -25,9 +25,9 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_model: str = "gpt-5"
-    # Reuses openai_api_key (same OpenAI account) - the LLM Gateway and RAG
-    # embeddings are different API surfaces but not different credentials.
-    embedding_model: str = "text-embedding-3-small"
+    # RAG embeddings run locally via fastembed (Hugging Face model, no API
+    # key) - unrelated to openai_api_key above, which is only for chat.
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
 
     openrouter_api_key: str = ""
     openrouter_model: str = "openrouter/free"
@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-flash"
 
     anthropic_api_key: str = ""
+
+    # Phase 4 MCP tool broker: web search/scrape (tavily.com, permanent free
+    # tier, no card). Live sensor data is a self-hosted simulator - needs no key.
+    tavily_api_key: str = ""
 
     # Flat per-tenant budget (plan Section G.1 quota_ledger, Q). One value
     # for every tenant since there's no plan/tier data yet - real per-plan

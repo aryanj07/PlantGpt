@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../documents/data/documents_api_client.dart';
+import '../../documents/presentation/documents_sheet.dart';
 import '../domain/chat_message.dart';
 import '../domain/chat_repository.dart';
 
@@ -22,9 +24,14 @@ String _generateLocalConversationId() {
 }
 
 class ChatPage extends StatefulWidget {
-  const ChatPage({required this.repository, super.key});
+  const ChatPage({required this.repository, this.documentsClient, super.key});
 
   final ChatRepository repository;
+
+  /// Only non-null when wired to the real backend (see main.dart) - document
+  /// upload has nothing to talk to under LocalChatRepository, so the AppBar
+  /// action simply doesn't appear in that case.
+  final DocumentsApiClient? documentsClient;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -155,7 +162,10 @@ class _ChatPageState extends State<ChatPage> {
     setState(() {
       final index = _messages.indexWhere((message) => message.id == pendingId);
       if (index != -1) {
-        _messages[index] = _messages[index].copyWith(isPending: false);
+        _messages[index] = _messages[index].copyWith(
+          isPending: false,
+          citations: widget.repository.lastCitations,
+        );
       }
       _isSending = false;
     });
@@ -194,6 +204,15 @@ class _ChatPageState extends State<ChatPage> {
         title: const Text('PlantGPT'),
         backgroundColor: colors.surface.withOpacity(0.82),
         actions: [
+          if (widget.documentsClient != null)
+            IconButton(
+              tooltip: 'Documents',
+              icon: const Icon(Icons.folder_open_outlined),
+              onPressed: () => showDocumentsSheet(
+                context,
+                client: widget.documentsClient!,
+              ),
+            ),
           IconButton(
             tooltip: 'New chat',
             icon: const Icon(Icons.add_comment_outlined),
@@ -330,6 +349,35 @@ class _MessageBubble extends StatelessWidget {
                   style: theme.textTheme.bodyLarge?.copyWith(
                     color: isUser ? colors.onPrimary : colors.onSurface,
                     height: 1.35,
+                  ),
+                ),
+              if (message.citations != null && message.citations!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      for (final citation in message.citations!)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.description_outlined,
+                              size: 14,
+                              color: colors.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Source: ${citation.title}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colors.onSurfaceVariant,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
                   ),
                 ),
             ],

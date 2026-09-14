@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 PlantGPT (package name `chatgpt_alt_db`) is a Flutter chat client modeled on ChatGPT's UI, purpose-built
 as a domain assistant for **industrial plant operations** — cement plants, steel plants, and
 manufacturing plants ("plant" as in facility, not botany). It's paired with a FastAPI backend
-(`backend/`, see `backend/README.md`) that owns the LLM Gateway, Auth Module, and (eventually) RAG/MCP —
+(`backend/`, see `backend/README.md`) that owns the LLM Gateway, Auth Module, RAG, and an MCP tool broker —
 the client no longer talks to any LLM provider or holds any provider API key directly. All chat screens
 depend only on the `ChatRepository` abstract interface (`lib/features/chat/domain/chat_repository.dart`),
 never on a concrete data source directly, so the backend can keep evolving without touching the UI.
@@ -69,6 +69,28 @@ project (Android + Web scaffolding present, iOS/others not set up).
   — see `backend/README.md` and `backend/.env.example`. The legacy `OpenAiChatRepository`/
   `OpenRouterChatRepository` classes still demonstrate the old client-embedded-key pattern in their own
   files/tests; don't reintroduce it by wiring them back into `main.dart`.
+- **RAG module (backend, done)**: `backend/app/modules/rag/` — `models.py` (SQLAlchemy `Document`/
+  `DocumentChunk`, the first genuinely persistent schema in this project, backed by real Postgres+pgvector
+  on Supabase via Alembic under `backend/alembic/`, not `create_all()`), `object_store.py`
+  (`LocalObjectStore`, local filesystem under `backend/data/`, gitignored — deliberately not S3/MinIO yet),
+  `embeddings.py` (local `BAAI/bge-small-en-v1.5` via `fastembed`/Hugging Face — switched from the original
+  OpenAI plan specifically to avoid needing `OPENAI_API_KEY`; no key, no cost, model cached under
+  `backend/data/fastembed_cache/`), `ingestion.py` + `router.py` (`POST`/`GET /v1/documents`, chunking +
+  embedding via FastAPI `BackgroundTasks`, no Arq/Redis), and `service.py`'s real `RAGService.retrieve()`
+  (pgvector cosine search filtered by `tenant_id`). Wired into `chat/service.py` for both the streaming and
+  non-streaming paths; citations flow through to `Message.citations`/`MessageOut` and the Flutter
+  `_MessageBubble`'s "Source: ..." line. Client-side upload UI: `lib/features/documents/`, a "Documents"
+  icon in the chat AppBar. Chat/auth/cost still stay on their existing in-memory stores — migrating them to
+  Postgres is an explicitly separate, deferred task, not part of RAG.
+- **MCP tool broker (backend, done)**: `backend/app/modules/mcp/` — `broker.py`'s `MCPToolBroker.run()`
+  dispatches heuristically (not LLM function-calling, a deliberate scope choice - see the module
+  docstring) based on `router/classifier.py`'s `classify_tool_kind()`: a self-hosted, zero-dependency
+  simulated sensor reading (`tools/sensor_simulator.py` - always explicitly labeled `simulated=True`,
+  never fabricates a number for a metric it doesn't know), or real web search/scrape via Tavily
+  (`tools/web_tool.py`, `TAVILY_API_KEY` in `backend/.env`, permanent free tier). Both produce the same
+  `{"document_id", "title", "source_uri"}` citation shape RAG uses, so the Flutter "Source: ..." UI shows
+  tool results too with no client changes. `dispatch(tool_name, arguments)` is an unused stub kept only
+  for a possible future real function-calling migration. v1 ships zero WRITE tools.
 - **Theming**: `lib/core/app_theme.dart` provides Material 3 light/dark `ThemeData` via `ColorScheme.fromSeed`;
   `main.dart` wires both into `MaterialApp` with `themeMode: ThemeMode.system`.
 - **Testing pattern**: `ApiChatRepository`, and the legacy `OpenAiChatRepository`/`OpenRouterChatRepository`/

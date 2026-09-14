@@ -5,6 +5,7 @@ import 'features/chat/data/api_chat_repository.dart';
 import 'features/chat/data/local_chat_repository.dart';
 import 'features/chat/domain/chat_repository.dart';
 import 'features/chat/presentation/chat_page.dart';
+import 'features/documents/data/documents_api_client.dart';
 
 void main() {
   runApp(const ChatApp());
@@ -48,13 +49,24 @@ class ChatApp extends StatelessWidget {
           )
         : LocalChatRepository();
 
+    // Document upload (Phase 3 RAG) only has a real backend to talk to when
+    // API_BASE_URL is set - same condition as the repository choice above.
+    final documentsClient = _apiBaseUrl.isEmpty
+        ? null
+        : DocumentsApiClient(
+            baseUrl: _apiBaseUrl,
+            sessionToken: _apiSessionToken.isEmpty ? null : _apiSessionToken,
+            devTenantId: _apiSessionToken.isEmpty ? _apiDevTenantId : null,
+            devUserId: _apiSessionToken.isEmpty ? _apiDevUserId : null,
+          );
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'PlantGPT',
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,
-      home: ChatPage(repository: repository),
+      home: ChatPage(repository: repository, documentsClient: documentsClient),
     );
   }
 }

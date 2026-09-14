@@ -29,6 +29,7 @@ class Message:
     content: str
     created_at: datetime
     is_pending: bool = False
+    citations: list[dict] | None = None
 
 
 class InMemoryChatStore:
@@ -66,7 +67,15 @@ class InMemoryChatStore:
             if c.tenant_id == tenant_id and c.user_id == user_id
         ]
 
-    def add_message(self, *, conversation_id: str, tenant_id: str, role: str, content: str) -> Message:
+    def add_message(
+        self,
+        *,
+        conversation_id: str,
+        tenant_id: str,
+        role: str,
+        content: str,
+        citations: list[dict] | None = None,
+    ) -> Message:
         msg = Message(
             id=str(uuid.uuid4()),
             conversation_id=conversation_id,
@@ -74,6 +83,7 @@ class InMemoryChatStore:
             role=role,
             content=content,
             created_at=datetime.now(UTC),
+            citations=citations,
         )
         self._messages.setdefault(conversation_id, []).append(msg)
         self._conversations[conversation_id].updated_at = msg.created_at
