@@ -13,7 +13,11 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.plantgpt.app"
-    compileSdk = flutter.compileSdkVersion
+    // Literal, not flutter.compileSdkVersion (still 34 on this Flutter
+    // release) - file_picker's flutter_plugin_android_lifecycle dependency
+    // needs >= 36 (see android/build.gradle's matching subprojects override
+    // for the plugin modules themselves).
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

@@ -13,6 +13,27 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// file_picker pulls in a flutter_plugin_android_lifecycle version that
+// requires compileSdk >= 36; Flutter 3.47.2's own flutter.compileSdkVersion
+// default is still 34, and each plugin module's own build.gradle sets its
+// compileSdk from that same shared property, evaluated after any plugins.withId
+// hook runs - so this must run afterEvaluate (last write wins), not at plugin-
+// apply time. :app is exempted (and set explicitly in android/app/build.gradle
+// instead) because evaluationDependsOn(":app") above already forces it to
+// evaluate before this block registers, and Gradle refuses afterEvaluate on an
+// already-evaluated project.
+subprojects { subproject ->
+    if (subproject.name != "app") {
+        subproject.afterEvaluate {
+            if (subproject.hasProperty("android")) {
+                subproject.android {
+                    compileSdk = 36
+                }
+            }
+        }
+    }
+}
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }
