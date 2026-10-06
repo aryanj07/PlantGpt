@@ -64,6 +64,13 @@ copy .env.example .env      # defaults work out of the box, no external services
 uvicorn app.main:app --reload
 ```
 
+**SQLite dev schema:** with the default `DATABASE_URL=sqlite:///./dev.db`, the app
+creates the `users`, `conversations`, `messages` and `tenant_usage` tables itself on
+startup (`app/dev_schema.py`) — don't run `alembic upgrade` against SQLite, the
+migrations are Postgres-only (pgvector). RAG's `documents`/`document_chunks` are not
+created on SQLite, so document upload/retrieval needs Postgres. On Postgres nothing
+changes: the schema comes from `alembic upgrade head` only.
+
 Then:
 - `GET http://127.0.0.1:8000/health` → `{"status": "ok"}`
 - `POST http://127.0.0.1:8000/v1/conversations` with header `X-Dev-Tenant-Id: t1` and

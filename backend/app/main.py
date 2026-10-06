@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.dev_schema import init_sqlite_dev_schema
 from app.modules.auth.router import router as auth_router
 from app.modules.chat.router import router as chat_router
 from app.modules.cost.router import router as cost_router
@@ -18,6 +19,11 @@ def create_app() -> FastAPI:
     # route_classified line) is silently dropped by Python's default
     # logging config - this just makes them visible during dev.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+    # SQLite-only, no-op on Postgres (which stays on Alembic) - see
+    # app/dev_schema.py. Runs at app construction rather than in a lifespan
+    # hook so it also covers TestClient(app) used without a `with` block.
+    init_sqlite_dev_schema()
 
     app = FastAPI(title="PlantGPT Backend", version="0.0.1-phase0")
 
