@@ -1,0 +1,73 @@
+"""Chat/Conversation Module HTTP surface (plan Section E). Maps to the
+existing Flutter ChatRepository contract (loadMessages/saveUserMessage/
+createAssistantReply) so ApiChatRepository (Phase 1, owner: Aranj) can be
+built directly against this without any client-side redesign."""
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+
+from app.modules.auth.schemas import CurrentIdentity
+from app.modules.auth.service import get_current_identity
+from app.modules.chat import service
+from app.modules.chat.schemas import ConversationOut, CreateMessageRequest, MessageOut
+
+router = APIRouter()
+
+
+def _row_dict(obj) -> dict:
+    """obj.__dict__ on a real SQLAlchemy instance (Phase 5) also carries
+    _sa_instance_state, which Out schemas would just silently ignore
+    (pydantic's default extra='ignore') - using __table__.columns instead
+    is the same safe pattern already used in rag/router.py."""
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+
+@router.post("/conversations", response_model=ConversationOut)
+def create_conversation(identity: CurrentIdentity = Depends(get_current_identity)) -> ConversationOut:
+    conv = service.create_conversation(tenant_id=identity.tenant_id, user_id=identity.user_id)
+    return ConversationOut(**_row_dict(conv))
+
+
+@router.get("/conversations", response_model=list[ConversationOut])
+def list_conversations(identity: CurrentIdentity = Depends(get_current_identity)) -> list[ConversationOut]:
+    convs = service.list_conversations(tenant_id=identity.tenant_id, user_id=identity.user_id)
+    return [ConversationOut(**_row_dict(c)) for c in convs]
+
+
+@router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
+def list_messages(
+    conversation_id: str, identity: CurrentIdentity = Depends(get_current_identity)
+) -> list[MessageOut]:
+    msgs = service.list_messages(tenant_id=identity.tenant_id, conversation_id=conversation_id)
+    return [MessageOut(**_row_dict(m)) for m in msgs]
+
+
+@router.post("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
+async def post_message(
+    conversation_id: str,
+    body: CreateMessageRequest,
+    identity: CurrentIdentity = Depends(get_current_identity),
+) -> list[MessageOut]:
+    user_msg, assistant_msg = await service.post_user_message(
+        tenant_id=identity.tenant_id, conversation_id=conversation_id, content=body.content
+    )
+    return [MessageOut(**_row_dict(user_msg)), MessageOut(**_row_dict(assistant_msg))]
+
+
+@router.post("/conversations/{conversation_id}/messages/stream")
+async def post_message_stream(
+    conversation_id: str,
+    body: CreateMessageRequest,
+    identity: CurrentIdentity = Depends(get_current_identity),
+) -> StreamingResponse:
+    """SSE variant of post_message (plan ADR 5). Auth happens here, before
+    any bytes are sent, so an invalid token still gets a normal 401 - once
+    the StreamingResponse starts, service.stream_assistant_reply reports
+    every further failure as an SSE event instead."""
+    return StreamingResponse(
+        service.stream_assistant_reply(
+            tenant_id=identity.tenant_id, conversation_id=conversation_id, content=body.content
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

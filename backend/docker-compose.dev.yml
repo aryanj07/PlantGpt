@@ -1,0 +1,57 @@
+# Local dev infrastructure for PlantGPT backend (plan ADR 12: single-VM /
+# Docker Compose for V1 dev, before a managed container platform is needed).
+#
+# This is config only — Docker isn't installed on this machine yet, so it
+# hasn't been run. Once Docker Desktop (or Docker Engine) is available:
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# Then point .env at these instead of the sqlite/in-memory Phase 0 defaults:
+#   DATABASE_URL=postgresql+psycopg2://plantgpt:plantgpt@localhost:5432/plantgpt
+#   REDIS_URL=redis://localhost:6379/0
+#
+# Object storage (MinIO) console: http://localhost:9001 (user: plantgpt / pass: plantgpt-dev)
+# S3-compatible endpoint: http://localhost:9000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: plantgpt
+      POSTGRES_PASSWORD: plantgpt
+      POSTGRES_DB: plantgpt
+    ports:
+      - "5432:5432"
+    volumes:
+      - plantgpt_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plantgpt"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: plantgpt
+      MINIO_ROOT_PASSWORD: plantgpt-dev
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - plantgpt_minio_data:/data
+
+volumes:
+  plantgpt_postgres_data:
+  plantgpt_minio_data:
