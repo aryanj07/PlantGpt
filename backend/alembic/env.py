@@ -2,8 +2,10 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy.engine import make_url
 
 from alembic import context
+from alembic.util import CommandError
 
 # Pulls DATABASE_URL from the same app.config.Settings every other module
 # uses (backend/.env, never committed) instead of alembic.ini's own
@@ -21,6 +23,18 @@ config = context.config
 # configparser treats "%" as interpolation syntax (e.g. a URL-encoded
 # password like "%40") - escape it before storing.
 config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
+
+# The migrations are PostgreSQL + pgvector only (0001 runs CREATE EXTENSION
+# vector and uses the vector type/ivfflat index). Refuse anything else up
+# front, before connecting, so a SQLite run fails with a clear message
+# instead of a SQL syntax error and an empty alembic_version table.
+_backend = make_url(get_settings().database_url).get_backend_name()
+if _backend != "postgresql":
+    raise CommandError(
+        f"Alembic migrations are PostgreSQL + pgvector only (DATABASE_URL uses {_backend!r}). "
+        "On SQLite, the chat/auth/cost tables are created automatically at app startup "
+        "(app/dev_schema.py); RAG requires Postgres."
+    )
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
